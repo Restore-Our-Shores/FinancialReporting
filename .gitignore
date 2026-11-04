@@ -1,0 +1,14 @@
+# Confidential financial inputs, reference data, and generated reports
+data/
+quarters/
+smartsheet_refreshes/
+
+# Local RStudio and R session files
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Operating-system files
+.DS_Store
+Thumbs.db
