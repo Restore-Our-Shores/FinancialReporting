@@ -11,7 +11,11 @@
 
 3. Use the browser tab that opens. Leave the R session open while using the app.
 
-If RStudio is not used, set the working directory to the `FinancialReports` project folder before running the same line. R and the `shiny` package must be installed.
+If RStudio is not used, set the working directory to the `FinancialReports` project folder before running the same line. R plus the `shiny` and `shinyFiles` packages must be installed.
+
+## Setup tab
+
+Before the first run, open **Setup** and select the local folder containing `ProjectCrosswalk.csv`, `AccountCategoryMap.csv`, `ProjectReportingRules.csv`, and `ByProjectCategoryBudgets.xlsx`. These private metadata files are intentionally not stored in GitHub.
 
 ## Quarterly report tab
 

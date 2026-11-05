@@ -8,7 +8,7 @@ Open `FinancialReports.Rproj` in RStudio. In its Console, run:
 shiny::runApp("shiny_app", launch.browser = TRUE)
 ```
 
-The app opens in a browser and is the normal entry point for this project. This assumes R and the `shiny` package are installed. If the project is opened another way, first set R's working directory to this folder.
+The app opens in a browser and is the normal entry point for this project. This assumes R plus the `shiny` and `shinyFiles` packages are installed. If needed, run `install.packages(c("shiny", "shinyFiles"))` once. If the project is opened another way, first set R's working directory to this folder.
 
 > **Code-only repository:** Financial inputs, project metadata, example GL data, receipts, mileage, and generated reports are intentionally excluded. Use authorized local copies of the required `data/Metadata` files and inputs when running the app.
 

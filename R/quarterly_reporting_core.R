@@ -169,12 +169,20 @@ write_settings_file <- function(path, values) {
 }
 
 snapshot_metadata <- function(metadata_folder, snapshot_folder) {
-  dir.create(snapshot_folder, recursive = TRUE, showWarnings = FALSE)
+  metadata_folder <- source_path(metadata_folder)
   files <- c("ProjectCrosswalk.csv", "AccountCategoryMap.csv", "ProjectReportingRules.csv", "ByProjectCategoryBudgets.xlsx")
+  missing <- if (is.na(metadata_folder) || !dir.exists(metadata_folder)) files else files[!file.exists(file.path(metadata_folder, files))]
+  if (length(missing) > 0) {
+    stop(
+      "Metadata setup is incomplete. Select the folder containing: ",
+      paste(files, collapse = ", "),
+      ". Missing: ", paste(missing, collapse = ", ")
+    )
+  }
+  dir.create(snapshot_folder, recursive = TRUE, showWarnings = FALSE)
   for (file_name in files) {
     source <- file.path(metadata_folder, file_name)
     destination <- file.path(snapshot_folder, file_name)
-    if (!file.exists(source)) stop("Shared metadata file is missing: ", source)
     if (!file.exists(destination) && !file.copy(source, destination, overwrite = FALSE)) {
       stop("Could not snapshot metadata file: ", source)
     }

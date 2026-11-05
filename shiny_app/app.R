@@ -1,4 +1,5 @@
 library(shiny)
+library(shinyFiles)
 
 options(shiny.maxRequestSize = 100 * 1024^2)
 
@@ -131,6 +132,20 @@ ui <- fluidPage(
   navbarPage(
     title = "Financial Reporting",
     tabPanel(
+      "Setup",
+      fluidRow(
+        column(
+          7,
+          wellPanel(
+            h3("Required setup"),
+            p("Select the local folder that contains the four private metadata files used by this app. These files are not stored in GitHub."),
+            shinyFiles::shinyDirButton("metadata_choose", "Select metadata folder", "Choose the folder containing the metadata files"),
+            verbatimTextOutput("metadata_path")
+          )
+        )
+      )
+    ),
+    tabPanel(
       "Quarterly report",
       fluidRow(
         column(
@@ -150,11 +165,11 @@ ui <- fluidPage(
             uiOutput("quarter_mileage_mapping"),
             hr(),
             h4("Supporting inputs"),
-            actionButton("quarter_receipts_choose", "Select receipt folder"),
+            shinyFiles::shinyDirButton("quarter_receipts_choose", "Select receipt folder", "Choose the receipt folder"),
             verbatimTextOutput("quarter_receipts_path"),
             hr(),
             h4("Project deliverables"),
-            actionButton("quarter_output_choose", "Select output folder"),
+            shinyFiles::shinyDirButton("quarter_output_choose", "Select output folder", "Choose the parent folder for project deliverables"),
             verbatimTextOutput("quarter_output_path"),
             hr(),
             numericInput("quarter_mileage_rate", "Mileage reimbursement rate", value = 0.765, min = 0, step = 0.001),
@@ -204,7 +219,7 @@ ui <- fluidPage(
               options = list(placeholder = "Upload a General Ledger to choose projects")),
             uiOutput("smartsheet_mileage_mapping"),
             div(class = "warning-note", "Payroll is read directly from the GL. Supply receipts and mileage when those amounts should be included in the draft."),
-            actionButton("smartsheet_receipts_choose", "Select receipt folder"),
+            shinyFiles::shinyDirButton("smartsheet_receipts_choose", "Select receipt folder", "Choose the receipt folder"),
             verbatimTextOutput("smartsheet_receipts_path"),
             numericInput("smartsheet_mileage_rate", "Mileage reimbursement rate", value = 0.765, min = 0, step = 0.001),
             numericInput("smartsheet_fringe_rate", "Payroll fringe rate", value = 0.18, min = 0, step = 0.01),
@@ -242,6 +257,51 @@ server <- function(input, output, session) {
   smartsheet_mileage_sheets <- reactiveVal(character())
   quarter_result <- reactiveVal(NULL)
   smartsheet_result <- reactiveVal(NULL)
+
+  metadata_files <- c("ProjectCrosswalk.csv", "AccountCategoryMap.csv", "ProjectReportingRules.csv", "ByProjectCategoryBudgets.xlsx")
+  metadata_default <- file.path(project_root, "data", "Metadata")
+  metadata_folder <- reactiveVal(if (dir.exists(metadata_default)) normalizePath(metadata_default, mustWork = TRUE) else "")
+  folder_roots <- shinyFiles::getVolumes()()
+
+  selected_directory <- function(value) {
+    selected <- tryCatch(shinyFiles::parseDirPath(folder_roots, value), error = function(error) character())
+    if (length(selected) == 0 || is.na(selected[1]) || !nzchar(selected[1])) return("")
+    normalizePath(selected[1], mustWork = FALSE)
+  }
+
+  metadata_problem <- function() {
+    folder <- metadata_folder()
+    if (!nzchar(folder) || !dir.exists(folder)) {
+      return("Select the folder containing ProjectCrosswalk.csv, AccountCategoryMap.csv, ProjectReportingRules.csv, and ByProjectCategoryBudgets.xlsx on the Setup tab.")
+    }
+    missing <- metadata_files[!file.exists(file.path(folder, metadata_files))]
+    if (length(missing) > 0) {
+      return(paste("The selected metadata folder is missing:", paste(missing, collapse = ", ")))
+    }
+    NULL
+  }
+
+  shinyFiles::shinyDirChoose(input, "metadata_choose", roots = folder_roots, session = session)
+  shinyFiles::shinyDirChoose(input, "quarter_receipts_choose", roots = folder_roots, session = session)
+  shinyFiles::shinyDirChoose(input, "smartsheet_receipts_choose", roots = folder_roots, session = session)
+  shinyFiles::shinyDirChoose(input, "quarter_output_choose", roots = folder_roots, session = session)
+
+  observeEvent(input$metadata_choose, {
+    folder <- selected_directory(input$metadata_choose)
+    if (nzchar(folder)) metadata_folder(folder)
+  })
+  observeEvent(input$quarter_receipts_choose, {
+    folder <- selected_directory(input$quarter_receipts_choose)
+    if (nzchar(folder)) quarter_receipts(folder)
+  })
+  observeEvent(input$smartsheet_receipts_choose, {
+    folder <- selected_directory(input$smartsheet_receipts_choose)
+    if (nzchar(folder)) smartsheet_receipts(folder)
+  })
+  observeEvent(input$quarter_output_choose, {
+    folder <- selected_directory(input$quarter_output_choose)
+    if (nzchar(folder)) quarter_output_root(folder)
+  })
 
   observeEvent(input$quarter_gl, {
     tryCatch({
@@ -303,19 +363,9 @@ server <- function(input, output, session) {
     )
   })
 
-  observeEvent(input$quarter_receipts_choose, {
-    folder <- utils::choose.dir(caption = "Select the receipt root folder")
-    if (!is.na(folder) && nzchar(folder)) quarter_receipts(folder)
-  })
-
-  observeEvent(input$smartsheet_receipts_choose, {
-    folder <- utils::choose.dir(caption = "Select the receipt root folder")
-    if (!is.na(folder) && nzchar(folder)) smartsheet_receipts(folder)
-  })
-
-  observeEvent(input$quarter_output_choose, {
-    folder <- utils::choose.dir(caption = "Select the parent folder for project deliverables")
-    if (!is.na(folder) && nzchar(folder)) quarter_output_root(folder)
+  output$metadata_path <- renderText({
+    problem <- metadata_problem()
+    if (is.null(problem)) paste("Metadata folder ready:", metadata_folder()) else problem
   })
 
   output$quarter_receipts_path <- renderText(if (nzchar(quarter_receipts())) quarter_receipts() else "No receipt folder selected")
@@ -324,6 +374,8 @@ server <- function(input, output, session) {
 
   observeEvent(input$run_quarterly, {
     tryCatch({
+      problem <- metadata_problem()
+      if (!is.null(problem)) stop(problem)
       selected_projects <- selected_project_values(input$quarter_projects, quarter_projects_available())
       paths <- prepare_quarter(
         quarter_id = input$quarter_id,
@@ -338,7 +390,8 @@ server <- function(input, output, session) {
         fringe_rate = input$quarter_fringe_rate,
         indirect_rate = input$quarter_indirect_rate,
         root = "quarters",
-        project_output_root = quarter_output_root()
+        project_output_root = quarter_output_root(),
+        metadata_folder = metadata_folder()
       )
       quarter_result(run_quarterly_pipeline(paths, delivery = "quarterly_report"))
       showNotification("Quarterly report package created for review.", type = "message")
@@ -349,6 +402,8 @@ server <- function(input, output, session) {
 
   observeEvent(input$run_smartsheet, {
     tryCatch({
+      problem <- metadata_problem()
+      if (!is.null(problem)) stop(problem)
       selected_projects <- selected_project_values(input$smartsheet_projects, smartsheet_projects_available())
       paths <- prepare_quarter(
         quarter_id = input$smartsheet_id,
@@ -362,7 +417,8 @@ server <- function(input, output, session) {
         mileage_rate = input$smartsheet_mileage_rate,
         fringe_rate = input$smartsheet_fringe_rate,
         indirect_rate = input$smartsheet_indirect_rate,
-        root = "smartsheet_refreshes"
+        root = "smartsheet_refreshes",
+        metadata_folder = metadata_folder()
       )
       smartsheet_result(run_quarterly_pipeline(paths, delivery = "smartsheet_draft"))
       showNotification("Smartsheet draft created for review.", type = "message")

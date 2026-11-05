@@ -17,7 +17,7 @@ The app has deliberately separate paths:
 - **Quarterly report** creates the formal retained package in `quarters/<Report Name>/`.
 - **Smartsheet refresh** creates a dashboard update draft in `smartsheet_refreshes/<Refresh ID>/`; it may be run more often than quarterly.
 
-Both use the same core functions and safeguards. Each retained record includes copied inputs, a metadata snapshot, settings, a run log, internal working outputs, and the requested delivery output.
+Both use the same core functions and safeguards. Each retained record includes copied inputs, a metadata snapshot, settings, a run log, internal working outputs, and the requested delivery output. Before the first run from a code-only clone, the user selects the local private metadata folder on the Setup tab.
 
 ## What users provide
 
