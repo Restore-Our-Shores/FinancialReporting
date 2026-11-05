@@ -112,7 +112,7 @@ page_help <- tagList(
   p("Use the Quarterly report tab for the complete quarterly reporting cycle. Use the Smartsheet refresh tab whenever the dashboard data needs a newer GL-based refresh."),
   tags$ul(
     tags$li("Both paths keep their files separate and retain copied source inputs."),
-    tags$li("A refresh based only on the GL is allowed, but it remains a draft. Payroll, expenses, mileage, and remaining balances stay pending until their required QC sources are supplied."),
+    tags$li("Payroll is read directly from the GL. Receipts and mileage remain visible for review until their supporting sources are supplied."),
     tags$li("Receipts can be placed in one folder. Include the amount in each filename; add a date when available so the app can match it to the GL.")
   ),
   h4("Project selection"),
@@ -137,9 +137,12 @@ ui <- fluidPage(
           4,
           wellPanel(
             h3("Report setup"),
-            textInput("quarter_id", "Name of report", value = paste("Financial Report", current_quarter_id())),
-            dateInput("quarter_start", "Reporting period start", value = current_quarter_start()),
-            dateInput("quarter_end", "Reporting period end", value = current_quarter_end()),
+            textInput("quarter_id", "Report Name", value = ""),
+            h4("Reporting dates"),
+            fluidRow(
+              column(6, dateInput("quarter_start", "Start date", value = NULL)),
+              column(6, dateInput("quarter_end", "End date", value = NULL))
+            ),
             fileInput("quarter_gl", "General Ledger", accept = c(".xlsx", ".xls", ".csv")),
             fileInput("quarter_mileage", "Mileage workbook (up to 100 MB)", accept = c(".xlsx", ".xls", ".csv")),
             selectizeInput("quarter_projects", "Projects to include", choices = character(), multiple = TRUE,
@@ -149,8 +152,6 @@ ui <- fluidPage(
             h4("Supporting inputs"),
             actionButton("quarter_receipts_choose", "Select receipt folder"),
             verbatimTextOutput("quarter_receipts_path"),
-            fileInput("quarter_payroll", "Finance payroll summary", accept = c(".xlsx", ".xls", ".csv")),
-            fileInput("quarter_prior", "Prior-spend file", accept = c(".xlsx", ".xls", ".csv")),
             hr(),
             h4("Project deliverables"),
             actionButton("quarter_output_choose", "Select output folder"),
@@ -175,8 +176,8 @@ ui <- fluidPage(
           tableOutput("quarter_scope"),
           h4("Reconciliation checks"),
           tableOutput("quarter_checks"),
-          h4("Payroll QC"),
-          tableOutput("quarter_payroll_qc"),
+          h4("Payroll from GL"),
+          tableOutput("quarter_payroll_summary"),
           h4("Expense and receipt QC"),
           tableOutput("quarter_receipt_qc"),
           h4("Category report draft"),
@@ -192,18 +193,19 @@ ui <- fluidPage(
           wellPanel(
             h3("Frequent dashboard refresh"),
             textInput("smartsheet_id", "Name of refresh", value = paste0(current_quarter_id(), "_smartsheet-current")),
-            dateInput("smartsheet_start", "Period start", value = current_quarter_start()),
-            dateInput("smartsheet_end", "Period end", value = current_quarter_end()),
+            h4("Reporting dates"),
+            fluidRow(
+              column(6, dateInput("smartsheet_start", "Start date", value = NULL)),
+              column(6, dateInput("smartsheet_end", "End date", value = NULL))
+            ),
             fileInput("smartsheet_gl", "Latest General Ledger", accept = c(".xlsx", ".xls", ".csv")),
             fileInput("smartsheet_mileage", "Mileage workbook (optional, up to 100 MB)", accept = c(".xlsx", ".xls", ".csv")),
             selectizeInput("smartsheet_projects", "Projects to include", choices = character(), multiple = TRUE,
               options = list(placeholder = "Upload a General Ledger to choose projects")),
             uiOutput("smartsheet_mileage_mapping"),
-            div(class = "warning-note", "A GL-only refresh creates a preliminary draft. Supply the optional sources when you need QC-ready payroll, expense, mileage, or balance values."),
+            div(class = "warning-note", "Payroll is read directly from the GL. Supply receipts and mileage when those amounts should be included in the draft."),
             actionButton("smartsheet_receipts_choose", "Select receipt folder"),
             verbatimTextOutput("smartsheet_receipts_path"),
-            fileInput("smartsheet_payroll", "Finance payroll summary (optional)", accept = c(".xlsx", ".xls", ".csv")),
-            fileInput("smartsheet_prior", "Prior-spend file (optional)", accept = c(".xlsx", ".xls", ".csv")),
             numericInput("smartsheet_mileage_rate", "Mileage reimbursement rate", value = 0.765, min = 0, step = 0.001),
             numericInput("smartsheet_fringe_rate", "Payroll fringe rate", value = 0.18, min = 0, step = 0.01),
             numericInput("smartsheet_indirect_rate", "Indirect rate", value = 0.10, min = 0, step = 0.01),
@@ -332,8 +334,6 @@ server <- function(input, output, session) {
         receipt_folder = quarter_receipts(),
         mileage_log = uploaded_path(input$quarter_mileage),
         mileage_sheet_map = selected_mileage_sheet_map(input, "quarter", selected_projects),
-        payroll_summary = uploaded_path(input$quarter_payroll),
-        prior_spend = uploaded_path(input$quarter_prior),
         mileage_rate = input$quarter_mileage_rate,
         fringe_rate = input$quarter_fringe_rate,
         indirect_rate = input$quarter_indirect_rate,
@@ -359,8 +359,6 @@ server <- function(input, output, session) {
         receipt_folder = smartsheet_receipts(),
         mileage_log = uploaded_path(input$smartsheet_mileage),
         mileage_sheet_map = selected_mileage_sheet_map(input, "smartsheet", selected_projects),
-        payroll_summary = uploaded_path(input$smartsheet_payroll),
-        prior_spend = uploaded_path(input$smartsheet_prior),
         mileage_rate = input$smartsheet_mileage_rate,
         fringe_rate = input$smartsheet_fringe_rate,
         indirect_rate = input$smartsheet_indirect_rate,
@@ -401,7 +399,7 @@ server <- function(input, output, session) {
   output$quarter_readiness <- renderTable({ req(quarter_result()); read_output(quarter_result()$paths, "Input_Readiness.csv") }, striped = TRUE, bordered = TRUE)
   output$quarter_scope <- renderTable({ req(quarter_result()); read_output(quarter_result()$paths, "Project_Scope.csv") }, striped = TRUE, bordered = TRUE)
   output$quarter_checks <- renderTable({ req(quarter_result()); read_output(quarter_result()$paths, "Reconciliation_Checks.csv") }, striped = TRUE, bordered = TRUE)
-  output$quarter_payroll_qc <- renderTable({ req(quarter_result()); read_output(quarter_result()$paths, "Payroll_GL_QC.csv") }, striped = TRUE, bordered = TRUE)
+  output$quarter_payroll_summary <- renderTable({ req(quarter_result()); read_output(quarter_result()$paths, "Payroll_GL_Summary.csv") }, striped = TRUE, bordered = TRUE)
   output$quarter_receipt_qc <- renderTable({ req(quarter_result()); read_output(quarter_result()$paths, "Expense_Receipt_QC.csv") }, striped = TRUE, bordered = TRUE)
   output$quarter_category <- renderTable({ req(quarter_result()); read_output(quarter_result()$paths, "Quarterly_Report_Category_Draft.csv") }, striped = TRUE, bordered = TRUE)
 

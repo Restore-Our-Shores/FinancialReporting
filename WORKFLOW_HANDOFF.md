@@ -14,25 +14,22 @@ This replaces the batch-file launcher. Keeping the entry point as one visible R 
 
 The app has deliberately separate paths:
 
-- **Quarterly report** creates the formal retained package in `quarters/<Report name>/`.
+- **Quarterly report** creates the formal retained package in `quarters/<Report Name>/`.
 - **Smartsheet refresh** creates a dashboard update draft in `smartsheet_refreshes/<Refresh ID>/`; it may be run more often than quarterly.
 
 Both use the same core functions and safeguards. Each retained record includes copied inputs, a metadata snapshot, settings, a run log, internal working outputs, and the requested delivery output.
 
 ## What users provide
 
-- General ledger with transaction detail; after upload, scope is selected from its `Grant and Program name` dropdown.
+- A report name and user-selected reporting start/end dates.
+- General ledger with transaction detail; after upload, scope is selected from its `Grant and Program name` dropdown. Payroll is read directly from the GL.
 - Receipt files in one flat folder or project folders. The filename must include its amount and should include a date and vendor, for example `2026-01-15_Vendor_$125.50.pdf`.
 - Maggie's quarterly mileage workbook. When it contains project worksheets, the user confirms the GL-project-to-worksheet matches before the run.
-- Finance payroll summary, which is checked against GL payroll. Include payroll date and staff/employee name when the by-date payroll workbook is needed.
-- Finance-confirmed prior spend.
 - Mileage reimbursement, fringe, and indirect rates.
 
+For a quarterly run, the user can choose an external deliverables folder. The app creates `<Report Name>/<Project>/` beneath it with `Project_Summary.xlsx`, `Receipt_Packet.pdf`, `Itemized_Expenses.xlsx`, and `Payroll_By_Date_and_Staff.xlsx`. Itemized expenses and their receipt packet share the same chronological order (receipt filename date, otherwise matched GL document date).
 
-
-For a quarterly run, the user can choose an external deliverables folder. The app creates `<Report name>/<Project>/` beneath it with `Project_Summary.xlsx`, `Receipt_Packet.pdf`, `Itemized_Expenses.xlsx`, and `Payroll_By_Date_and_Staff.xlsx`. Itemized expenses and their receipt packet share the same chronological order (receipt filename date, otherwise matched GL document date).
-
-Missing inputs remain visibly pending. Payroll is accepted only after its Finance/GL check passes; expenses are accepted only after receipt/GL check passes. The Smartsheet output is an import draft, not a direct publication.
+Missing inputs remain visibly pending. Expenses are accepted only after receipt/GL check passes. The Smartsheet output is an import draft, not a direct publication.
 
 ## Key files
 
@@ -43,6 +40,6 @@ Missing inputs remain visibly pending. Payroll is accepted only after its Financ
 
 ## Remaining production decisions
 
-1. Test with completed mileage, payroll, receipt, and prior-spend inputs to demonstrate a fully passing run.
+1. Test with completed mileage and receipt inputs to demonstrate a fully passing run.
 2. Confirm account-to-category mapping, budgets, and any funder-specific presentation rules.
 3. Decide whether the accepted `Smartsheet_Draft.csv` process should later be replaced with direct Smartsheet integration.

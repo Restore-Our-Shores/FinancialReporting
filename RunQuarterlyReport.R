@@ -73,14 +73,13 @@ write_csv <- function(data, name, output_dir) {
 gl_path <- resolve_path(setting_value("General ledger file"))
 receipt_folder <- resolve_path(setting_value("Receipt folder"))
 mileage_path <- resolve_path(setting_value("Mileage log file"))
-payroll_path <- resolve_path(setting_value("Finance payroll summary file"))
-prior_spend_path <- resolve_path(setting_value("Prior spend file"))
 output_dir <- resolve_path(setting_value("Output folder"))
-payroll_tolerance <- as.numeric(setting_value("Payroll QC tolerance"))
 expense_tolerance <- as.numeric(setting_value("Expense receipt QC tolerance"))
 period_start <- as.Date(setting_value("Reporting period start"))
 period_end <- as.Date(setting_value("Reporting period end"))
-period_label <- paste0("Q", ((month(period_start) - 1) %/% 3) + 1, ":", format(period_start, "%y"))
+if (is.na(period_start) || is.na(period_end)) stop("Select both Reporting dates in the app.")
+if (period_end < period_start) stop("Reporting end date must be on or after the start date.")
+period_label <- paste(format(period_start, "%Y-%m-%d"), "to", format(period_end, "%Y-%m-%d"))
 project_scope_value <- setting_value("Included projects")
 project_scope <- if (is.na(project_scope_value) || !nzchar(trimws(project_scope_value)) || tolower(trimws(project_scope_value)) %in% c("all", "all projects", "all projects in gl")) {
   character(0)
@@ -274,39 +273,22 @@ expense_receipt_qc <- full_join(gl_expenses, receipt_summary, by = "project_stan
     )
   )
 
-# 3. Finance payroll is the payroll-reporting source only after a GL tie-out.
-payroll_raw <- tryCatch(read_optional_table(payroll_path), error = function(e) e)
-payroll_detail <- tibble(project_standard = character(), payroll_date = character(), staff_name = character(), payroll_amount = numeric(), status = character())
-payroll_qc <- gl_actuals %>%
+# 3. Payroll is taken directly from the GL. GL vendor name is used as the
+# staff name when it is available.
+payroll_detail <- standardized_gl %>%
+  filter(include_in_reports == "Yes", category == "Payroll", net_amount != 0) %>%
+  transmute(
+    project_standard,
+    payroll_date = as.character(coalesce(document_date, transaction_date)),
+    staff_name = coalesce(na_if(str_squish(vendor), ""), "Not listed in GL"),
+    payroll_amount = net_amount,
+    status = "From GL"
+  ) %>%
+  arrange(project_standard, payroll_date, staff_name)
+
+payroll_summary <- gl_actuals %>%
   filter(category == "Payroll") %>%
-  transmute(project_standard, gl_payroll = gl_actual)
-if (inherits(payroll_raw, "error") || is.null(payroll_raw)) {
-  payroll_qc <- payroll_qc %>% mutate(finance_payroll = NA_real_, difference = NA_real_, status = if (inherits(payroll_raw, "error")) payroll_raw$message else "Finance payroll summary missing")
-} else {
-  project_column <- find_column(payroll_raw, "project|grant|program")
-  amount_column <- find_column(payroll_raw, "payroll.*amount|amount.*payroll|payroll")
-  if (is.na(project_column) || is.na(amount_column)) {
-    payroll_qc <- payroll_qc %>% mutate(finance_payroll = NA_real_, difference = NA_real_, status = "Finance payroll summary needs Project and Payroll Amount columns")
-  } else {
-    finance_payroll <- payroll_raw %>%
-      transmute(project_standard = map_project(.data[[names(payroll_raw)[project_column]]], crosswalk), finance_payroll = parse_number_safe(.data[[names(payroll_raw)[amount_column]]])) %>%
-      group_by(project_standard) %>% summarise(finance_payroll = sum(finance_payroll, na.rm = TRUE), .groups = "drop")
-    payroll_qc <- full_join(payroll_qc, finance_payroll, by = "project_standard") %>%
-      mutate(difference = finance_payroll - gl_payroll, status = case_when(is.na(finance_payroll) ~ "Finance payroll project missing", is.na(gl_payroll) ~ "Finance payroll has no matching GL", abs(difference) <= payroll_tolerance ~ "Pass", TRUE ~ "Review variance"))
-    date_column <- find_column(payroll_raw, "pay.*date|date")
-    staff_column <- find_column(payroll_raw, "staff|employee|name")
-    if (!is.na(date_column) && !is.na(staff_column)) {
-      payroll_detail <- payroll_raw %>%
-        transmute(
-          project_standard = map_project(.data[[names(payroll_raw)[project_column]]], crosswalk),
-          payroll_date = as.character(parse_gl_date(.data[[names(payroll_raw)[date_column]]])),
-          staff_name = as.character(.data[[names(payroll_raw)[staff_column]]]),
-          payroll_amount = parse_number_safe(.data[[names(payroll_raw)[amount_column]]]),
-          status = "Available"
-        )
-    }
-  }
-}
+  transmute(project_standard, payroll_from_gl = gl_actual, status = "From GL")
 
 # 4. Mileage requires Maggie's log and a project rule with an approved rate.
 mileage_raw <- tryCatch(read_optional_table(mileage_path), error = function(e) e)
@@ -327,22 +309,7 @@ if (inherits(mileage_raw, "error") || is.null(mileage_raw)) {
   }
 }
 
-# 5. Contract balances need finance-confirmed prior spend. The existing
-# metadata '- Spent' values remain comparison data, not prior-period actuals.
-prior_raw <- tryCatch(read_optional_table(prior_spend_path), error = function(e) e)
-prior_spend <- tibble(project_standard = character(0), category = character(0), prior_spend = numeric(0))
-prior_status <- if (inherits(prior_raw, "error")) prior_raw$message else if (is.null(prior_raw)) "Prior spend file missing" else "Pass"
-if (!inherits(prior_raw, "error") && !is.null(prior_raw)) {
-  project_column <- find_column(prior_raw, "project|grant|program")
-  category_column <- find_column(prior_raw, "^category$")
-  amount_column <- find_column(prior_raw, "prior.*spend|spend.*prior")
-  if (is.na(project_column) || is.na(category_column) || is.na(amount_column)) {
-    prior_status <- "Prior spend file needs Project, Category, and Prior Spend columns"
-  } else {
-    prior_spend <- prior_raw %>% transmute(project_standard = map_project(.data[[names(prior_raw)[project_column]]], crosswalk), category = .data[[names(prior_raw)[category_column]]], prior_spend = parse_number_safe(.data[[names(prior_raw)[amount_column]]]))
-  }
-}
-
+# 5. Use the configured budget table for current-period context only.
 budget_metadata <- read_excel(budget_path) %>%
   transmute(project_standard = `Project Name`, item = Item, contracted_amount = as.numeric(Value), category = str_extract(Item, "^(Payroll|Expenses|Mileage)"), item_type = str_extract(Item, "(Budgeted|Spent)$"))
 budgets <- budget_metadata %>% filter(item_type == "Budgeted", !is.na(category)) %>% select(project_standard, category, contracted_amount)
@@ -352,25 +319,22 @@ categories <- c("Payroll", "Expenses", "Mileage")
 report_categories <- expand.grid(project_standard = projects, category = categories, stringsAsFactors = FALSE) %>% as_tibble() %>%
   left_join(budgets, by = c("project_standard", "category")) %>%
   left_join(gl_actuals, by = c("project_standard", "category")) %>%
-  left_join(payroll_qc %>% select(project_standard, finance_payroll, payroll_status = status), by = "project_standard") %>%
+  left_join(payroll_summary, by = "project_standard") %>%
   left_join(expense_receipt_qc %>% select(project_standard, receipt_packet_total, expense_status = status), by = "project_standard") %>%
   left_join(mileage_summary %>% select(project_standard, miles, mileage_cost, mileage_status = status), by = "project_standard") %>%
-  left_join(prior_spend, by = c("project_standard", "category")) %>%
   mutate(
     current_quarter_spend = case_when(
-      category == "Payroll" & payroll_status == "Pass" ~ finance_payroll,
+      category == "Payroll" ~ payroll_from_gl,
       category == "Expenses" & expense_status == "Pass" ~ gl_actual,
       category == "Mileage" & mileage_status == "Pass" ~ mileage_cost,
       TRUE ~ NA_real_
     ),
-    remaining = if_else(!is.na(contracted_amount) & !is.na(prior_spend) & !is.na(current_quarter_spend), contracted_amount - prior_spend - current_quarter_spend, NA_real_),
     readiness = case_when(
-      category == "Payroll" ~ payroll_status,
+      category == "Payroll" ~ "From GL",
       category == "Expenses" ~ expense_status,
       category == "Mileage" ~ mileage_status,
       TRUE ~ "Review"
-    ),
-    prior_spend_status = prior_status
+    )
   ) %>% arrange(project_standard, factor(category, levels = categories))
 
 smartsheet_draft <- report_categories %>%
@@ -385,26 +349,24 @@ smartsheet_draft <- report_categories %>%
     `Spent Amount` = if_else(!is.na(Payroll) & !is.na(Expenses) & !is.na(Mileage), Payroll + Expenses + Mileage, NA_real_),
     `Total Budget` = if_else(!is.na(contracted_amount_Payroll) & !is.na(contracted_amount_Expenses) & !is.na(contracted_amount_Mileage), contracted_amount_Payroll + contracted_amount_Expenses + contracted_amount_Mileage, NA_real_),
     `Percent Spent` = if_else(!is.na(`Spent Amount`) & !is.na(`Total Budget`) & `Total Budget` != 0, `Spent Amount` / `Total Budget`, NA_real_),
-    `Report Status` = if_else(!is.na(`Percent Spent`) & prior_status == "Pass", "Ready for review", "Inputs or QC pending")
+    `Report Status` = if_else(!is.na(`Percent Spent`), "Ready for review", "Inputs or QC pending")
   )
 
 input_readiness <- tibble(
-  input = c("General ledger", "Receipt packet", "Mileage log from Maggie", "Finance payroll summary", "Prior spend history"),
-  location = c(gl_path, receipt_folder, mileage_path, payroll_path, prior_spend_path),
+  input = c("General ledger", "Receipt packet", "Mileage log from Maggie"),
+  location = c(gl_path, receipt_folder, mileage_path),
   status = c(
     if_else(file.exists(gl_path), "Available", "Missing"),
     if_else(length(receipt_files) > 0, paste(length(receipt_files), "receipt file(s) found"), "Missing"),
-    if_else(!is.na(mileage_path) && file.exists(mileage_path), "Available", "Missing"),
-    if_else(!is.na(payroll_path) && file.exists(payroll_path), "Available", "Missing"),
-    if_else(!is.na(prior_spend_path) && file.exists(prior_spend_path), "Available", "Missing")
+    if_else(!is.na(mileage_path) && file.exists(mileage_path), "Available", "Missing")
   ),
-  why_it_matters = c("Source transaction detail and GL controls.", "Expense-packet comparison.", "Mileage amount and mileage category actual.", "Payroll reporting amount and GL cross-check.", "Previous spend and remaining contract balance.")
+  why_it_matters = c("Source transaction detail, including payroll, and GL controls.", "Expense-packet comparison.", "Mileage amount and mileage category actual.")
 )
 
 reconciliation_checks <- tibble(
-  check = c("GL source total less standardized net for selected projects", "Unmapped project transactions", "Unmapped account transactions", "Possible duplicate transactions", "Payroll QC projects passed", "Expense receipt QC projects passed"),
-  value = c(sum(standardized_gl$net_amount) - scoped_source_total, sum(standardized_gl$project_standard == ""), sum(standardized_gl$category == "Unmapped"), sum(standardized_gl$possible_duplicate), sum(payroll_qc$status == "Pass"), sum(expense_receipt_qc$status == "Pass")),
-  status = c(if_else(abs(sum(standardized_gl$net_amount) - scoped_source_total) < 0.005, "Pass", "Review"), if_else(any(standardized_gl$project_standard == ""), "Review", "Pass"), if_else(any(standardized_gl$category == "Unmapped"), "Review", "Pass"), if_else(any(standardized_gl$possible_duplicate), "Review", "Pass"), "Review", "Review")
+  check = c("GL source total less standardized net for selected projects", "Unmapped project transactions", "Unmapped account transactions", "Possible duplicate transactions", "Expense receipt QC projects passed"),
+  value = c(sum(standardized_gl$net_amount) - scoped_source_total, sum(standardized_gl$project_standard == ""), sum(standardized_gl$category == "Unmapped"), sum(standardized_gl$possible_duplicate), sum(expense_receipt_qc$status == "Pass")),
+  status = c(if_else(abs(sum(standardized_gl$net_amount) - scoped_source_total) < 0.005, "Pass", "Review"), if_else(any(standardized_gl$project_standard == ""), "Review", "Pass"), if_else(any(standardized_gl$category == "Unmapped"), "Review", "Pass"), if_else(any(standardized_gl$possible_duplicate), "Review", "Pass"), "Review")
 )
 
 write_csv(project_scope_summary, "Project_Scope.csv", output_dir)
@@ -412,7 +374,7 @@ write_csv(standardized_gl, "Standardized_GL_Transactions.csv", output_dir)
 write_csv(input_readiness, "Input_Readiness.csv", output_dir)
 write_csv(receipt_inventory, "Receipt_Inventory.csv", output_dir)
 write_csv(receipt_reconciliation, "Receipt_Reconciliation.csv", output_dir)
-write_csv(payroll_qc, "Payroll_GL_QC.csv", output_dir)
+write_csv(payroll_summary, "Payroll_GL_Summary.csv", output_dir)
 write_csv(payroll_detail, "Payroll_Detail.csv", output_dir)
 write_csv(expense_receipt_qc, "Expense_Receipt_QC.csv", output_dir)
 write_csv(mileage_summary, "Mileage_Summary.csv", output_dir)
@@ -421,17 +383,17 @@ write_csv(smartsheet_draft, "Smartsheet_Draft.csv", output_dir)
 write_csv(reconciliation_checks, "Reconciliation_Checks.csv", output_dir)
 
 writeLines(c(
-  "Quarterly Financial Reporting Pipeline — Run Notes",
-  paste("Reporting period:", period_label),
+  "Quarterly Financial Reporting Pipeline - Run Notes",
+  paste("Reporting dates:", period_label),
   "",
   "Use the files in this output folder in this order:",
-  "1. Input_Readiness.csv — confirm every required source is available.",
-  "2. Project_Scope.csv â€” confirm all or only the intended Grant and Program name values are included.",
-  "3. Payroll_GL_QC.csv — resolve every variance before Payroll feeds the report.",
-  "4. Expense_Receipt_QC.csv and Receipt_Inventory.csv — resolve packet variances and filenames with no dollar amount.",
-  "5. Mileage_Summary.csv — confirm Maggie's miles and applicable project rate.",
-  "6. Quarterly_Report_Category_Draft.csv — review funding, prior spend, current spend, and remaining balance.",
-  "7. Smartsheet_Draft.csv — import only rows marked Ready for review."
+  "1. Input_Readiness.csv - confirm every required source is available.",
+  "2. Project_Scope.csv - confirm all or only the intended Grant and Program name values are included.",
+  "3. Payroll_GL_Summary.csv and Payroll_Detail.csv - review payroll amounts drawn from the GL.",
+  "4. Expense_Receipt_QC.csv and Receipt_Inventory.csv - resolve packet variances and filenames with no dollar amount.",
+  "5. Mileage_Summary.csv - confirm Maggie's miles and applicable project rate.",
+  "6. Quarterly_Report_Category_Draft.csv - review funding amounts and current-period spend.",
+  "7. Smartsheet_Draft.csv - import only rows marked Ready for review."
 ), file.path(output_dir, "RUN_NOTES.txt"))
 
 cat("Quarterly reporting pipeline complete. Review:", normalizePath(output_dir), "\n")

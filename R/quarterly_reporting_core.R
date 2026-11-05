@@ -3,11 +3,11 @@
 
 quarter_path <- function(quarter_id, root = "quarters") {
   report_name <- trimws(as.character(quarter_id[1]))
-  if (!nzchar(report_name)) stop("Name of report is required.")
+  if (!nzchar(report_name)) stop("Report Name is required.")
   safe_id <- gsub("[<>:\"/\\\\|?*]+", "_", report_name)
   safe_id <- gsub("\\s+", "_", safe_id)
   safe_id <- gsub("^[_\\.]+|[_\\.]+$", "", safe_id)
-  if (!nzchar(safe_id)) stop("Name of report must include letters or numbers.")
+  if (!nzchar(safe_id)) stop("Report Name must include letters or numbers.")
   file.path(normalizePath(root, mustWork = FALSE), safe_id)
 }
 
@@ -146,22 +146,19 @@ write_settings_file <- function(path, values) {
     Setting = names(values),
     Value = unname(as.character(values)),
     Notes = c(
-      "The user-provided name of this report.",
-      "The first date included in this quarterly report.",
-      "The last date included in this quarterly report.",
+      "The user-provided report name.",
+      "The first date included in this report.",
+      "The last date included in this report.",
       "All projects in GL, or project names from Grant and Program name separated by semicolons.",
-      "A copied snapshot of the GL supplied for this quarter.",
-      "Receipt folders copied for this quarter. Keep one project folder per project.",
+      "A copied snapshot of the GL supplied for this report.",
+      "Receipt folders copied for this report.",
       "The original mileage workbook supplied for this report.",
       "Mileage rows extracted from the worksheet(s) selected in the app.",
       "The confirmed GL-project-to-mileage-worksheet mapping.",
       "Optional parent folder for user-facing project deliverables.",
-      "A copied snapshot of Finance's payroll summary.",
-      "A copied snapshot of prior spend by project and category.",
       "Internal working output. Do not edit this path.",
-      "Finance payroll must tie to GL payroll within this tolerance.",
       "Receipt packet total must tie to GL expenses within this tolerance.",
-      "Approved reimbursement rate for this quarter.",
+      "Approved reimbursement rate for this report.",
       "Approved payroll fringe rate for invoice estimates.",
       "Approved indirect rate for invoice estimates."
     ),
@@ -193,8 +190,6 @@ prepare_quarter <- function(
   receipt_folder = "",
   mileage_log = "",
   mileage_sheet_map = character(),
-  payroll_summary = "",
-  prior_spend = "",
   mileage_rate = 0.765,
   fringe_rate = 0.18,
   indirect_rate = 0.10,
@@ -224,8 +219,6 @@ prepare_quarter <- function(
     mileage_workbook = mileage_workbook,
     mileage = mileage_log_path,
     mileage_mapping = mileage_mapping_path,
-    payroll = copy_input_file(payroll_summary, file.path(input_dir, "payroll")),
-    prior_spend = copy_input_file(prior_spend, file.path(input_dir, "prior_spend")),
     internal = file.path(output_dir, "internal"),
     quarterly = file.path(output_dir, "quarterly_report"),
     smartsheet = file.path(output_dir, "smartsheet"),
@@ -248,10 +241,7 @@ prepare_quarter <- function(
     "Mileage log file" = paths$mileage,
     "Mileage worksheet mapping file" = paths$mileage_mapping,
     "Project deliverables folder" = paths$project_output_root,
-    "Finance payroll summary file" = paths$payroll,
-    "Prior spend file" = paths$prior_spend,
     "Output folder" = normalizePath(paths$internal, mustWork = FALSE),
-    "Payroll QC tolerance" = "0.01",
     "Expense receipt QC tolerance" = "0.01",
     "Mileage reimbursement rate" = as.character(mileage_rate),
     "Payroll fringe rate" = as.character(fringe_rate),
@@ -326,10 +316,9 @@ refresh_rate_outputs <- function(output_dir, settings_path) {
 
   spent <- ifelse(is.finite(payroll) & is.finite(expenses) & is.finite(mileage), payroll + expenses + mileage, NA_real_)
   total_budget <- ifelse(is.finite(payroll_budget) & is.finite(expenses_budget) & is.finite(mileage_budget), payroll_budget + expenses_budget + mileage_budget, NA_real_)
-  prior_ok <- "prior_spend_status" %in% names(categories) && all(categories$prior_spend_status == "Pass")
-  period <- read_setting(settings, "Reporting period start")
-  period_date <- as.Date(period)
-  period_label <- paste0("Q", ((as.integer(format(period_date, "%m")) - 1) %/% 3) + 1, ":", format(period_date, "%y"))
+  period_start <- as.Date(read_setting(settings, "Reporting period start"))
+  period_end <- as.Date(read_setting(settings, "Reporting period end"))
+  period_label <- paste(format(period_start, "%Y-%m-%d"), "to", format(period_end, "%Y-%m-%d"))
   smartsheet <- data.frame(
     Project = projects,
     "Reporting Period" = period_label,
@@ -339,7 +328,7 @@ refresh_rate_outputs <- function(output_dir, settings_path) {
     "Spent Amount" = spent,
     "Total Budget" = total_budget,
     "Percent Spent" = ifelse(is.finite(spent) & is.finite(total_budget) & total_budget != 0, spent / total_budget, NA_real_),
-    "Report Status" = ifelse(is.finite(spent) & is.finite(total_budget) & prior_ok, "Ready for review", "Inputs or QC pending"),
+    "Report Status" = ifelse(is.finite(spent) & is.finite(total_budget), "Ready for review", "Inputs or QC pending"),
     check.names = FALSE
   )
   utils::write.csv(smartsheet, file.path(output_dir, "Smartsheet_Draft.csv"), row.names = FALSE, na = "")
@@ -440,7 +429,7 @@ build_project_deliverables <- function(paths) {
       payroll[payroll$project_standard == project, , drop = FALSE]
     } else data.frame()
     if (nrow(project_payroll) == 0) {
-      project_payroll <- data.frame(Message = "No dated staff-level payroll rows were available in the Finance payroll file.", stringsAsFactors = FALSE)
+      project_payroll <- data.frame(Message = "No dated payroll transactions were available in the General Ledger.", stringsAsFactors = FALSE)
     } else {
       project_payroll <- project_payroll[order(project_payroll$payroll_date, project_payroll$staff_name), , drop = FALSE]
     }
@@ -453,7 +442,7 @@ build_project_deliverables <- function(paths) {
 
 copy_deliverables <- function(paths, delivery) {
   quarterly_files <- c(
-    "Input_Readiness.csv", "Payroll_GL_QC.csv", "Payroll_Detail.csv", "Expense_Receipt_QC.csv",
+    "Input_Readiness.csv", "Payroll_GL_Summary.csv", "Payroll_Detail.csv", "Expense_Receipt_QC.csv",
     "Receipt_Reconciliation.csv", "Mileage_Summary.csv", "Project_Scope.csv", "Quarterly_Report_Category_Draft.csv",
     "Invoice_Estimate_Draft.csv", "Reconciliation_Checks.csv", "RUN_NOTES.txt"
   )
