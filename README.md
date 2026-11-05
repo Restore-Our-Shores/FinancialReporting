@@ -10,22 +10,22 @@ shiny::runApp("shiny_app", launch.browser = TRUE)
 
 The app opens in a browser and is the normal entry point for this project. This assumes R plus the `shiny` and `shinyFiles` packages are installed. If needed, run `install.packages(c("shiny", "shinyFiles"))` once. If the project is opened another way, first set R's working directory to this folder.
 
-> **Code-only repository:** Financial inputs, project metadata, example GL data, receipts, mileage, and generated reports are intentionally excluded. Use authorized local copies of the required `data/Metadata` files and inputs when running the app.
+> **Code-only repository:** Financial inputs, example GL data, receipts, mileage, and generated reports are intentionally excluded. Select the current authorized inputs in the app for each run.
 
-## Two independent workflows
+## Build reports
 
-- **Quarterly report** creates a retained, reviewable report package. Enter a report name and reporting dates; choose the GL, mileage workbook (up to 100 MB), a flat receipt folder or receipt subfolders; select the GL projects to include; confirm any mileage worksheet matches; set approved rates; and choose an optional project-deliverables folder. Payroll comes directly from the GL. Its retained files are saved in `quarters/<Report Name>/`; the chosen output folder receives one summary, receipt packet, itemized-expense workbook, and GL payroll-by-date-and-staff workbook per project.
-- **Smartsheet refresh** creates an update draft for the dashboard whenever it is needed. It does not need to wait for quarter-end and is saved separately in `smartsheet_refreshes/<Refresh ID>/`.
+For fictional inputs that work together, see [simulated_data/README.md](simulated_data/README.md). This set includes a GL, nine matching PDF receipts, a mileage workbook, and an output folder for July-September 2026.
 
-Both workflows use the same validation and calculation rules, but they intentionally keep their inputs and output records separate.
+- **Quarterly report** creates a retained, reviewable report package. Enter a report name and reporting dates; choose the GL, mileage workbook (up to 100 MB), a flat receipt folder or receipt subfolders; select the GL projects to include; confirm any mileage worksheet matches; set approved rates; and choose an output folder. The app creates one project-named folder directly inside the selected output folder. Each contains `Category_Spend_Summary.xlsx`, `Hourly_Time_Entries.xlsx`, and `Detailed_Expenses.xlsx`, plus a receipt packet when one can be created.
+- Every run also writes **SmartsheetInput.xlsx** directly in the selected output folder. Its single worksheet uses the reference columns: Project, Payroll, Expenses, Mileage, Spent Amount, Total Budget, and Percent Spent. Each selected project appears three times, in Expenses, Payroll, then Mileage order. Only the corresponding category column and Spent Amount are populated per row. Budget fields remain blank without a budget source. Copy the desired values into Smartsheet by hand.
 
 ## Key safeguards
 
 - After the GL uploads, select one or more projects from its `Grant and Program name` dropdown. All projects are selected by default.
 - Reporting start and end dates are chosen by the user for every run.
-- Every quarterly run snapshots its inputs, metadata, settings, and QC evidence so later work does not alter the previous report.
+- Every quarterly run snapshots its selected inputs, settings, and QC evidence so later work does not alter the previous report.
 - The pipeline leaves a result blank when a required source or reconciliation is missing; it never replaces missing information with zero.
 - Payroll is read from the GL. Expenses are used only after receipt totals tie to GL expenses. Per-project packets include only confirmed receipt/GL matches; uncertain matches stay in the review files.
-- `Smartsheet_Draft.csv` is a review-ready import draft; the app does not publish directly to Smartsheet.
+- `SmartsheetInput.xlsx` is generated automatically for manual entry into Smartsheet.
 
 See [QUARTERLY_REPORTING_GUIDE.md](QUARTERLY_REPORTING_GUIDE.md) for operating steps and [WORKFLOW_HANDOFF.md](WORKFLOW_HANDOFF.md) for the full handoff record.

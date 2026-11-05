@@ -12,12 +12,7 @@ This replaces the batch-file launcher. Keeping the entry point as one visible R 
 
 ## Workflow design
 
-The app has deliberately separate paths:
-
-- **Quarterly report** creates the formal retained package in `quarters/<Report Name>/`.
-- **Smartsheet refresh** creates a dashboard update draft in `smartsheet_refreshes/<Refresh ID>/`; it may be run more often than quarterly.
-
-Both use the same core functions and safeguards. Each retained record includes copied inputs, a metadata snapshot, settings, a run log, internal working outputs, and the requested delivery output. Before the first run from a code-only clone, the user selects the local private metadata folder on the Setup tab.
+The Quarterly report page creates the retained package in `quarters/<Report Name>/`, project folders, and an automatic `SmartsheetInput.xlsx` summary in the selected output folder. The separate Smartsheet refresh page has been removed. Each retained record includes copied inputs, settings, a run log, internal working outputs, and the requested delivery output.
 
 ## What users provide
 
@@ -27,19 +22,18 @@ Both use the same core functions and safeguards. Each retained record includes c
 - Maggie's quarterly mileage workbook. When it contains project worksheets, the user confirms the GL-project-to-worksheet matches before the run.
 - Mileage reimbursement, fringe, and indirect rates.
 
-For a quarterly run, the user can choose an external deliverables folder. The app creates `<Report Name>/<Project>/` beneath it with `Project_Summary.xlsx`, `Receipt_Packet.pdf`, `Itemized_Expenses.xlsx`, and `Payroll_By_Date_and_Staff.xlsx`. Itemized expenses and their receipt packet share the same chronological order (receipt filename date, otherwise matched GL document date).
+For a quarterly run, the user selects an output folder. The app creates `<Project>/` directly inside it with `Category_Spend_Summary.xlsx`, `Receipt_Packet.pdf`, `Detailed_Expenses.xlsx`, and `Hourly_Time_Entries.xlsx`.
 
-Missing inputs remain visibly pending. Expenses are accepted only after receipt/GL check passes. The Smartsheet output is an import draft, not a direct publication.
+Missing inputs remain visibly pending. Expenses are accepted only after the receipt/GL check passes. The Smartsheet workbook contains one worksheet with three consecutive rows per selected project: Expenses, Payroll, and Mileage. It uses the reference's seven columns and is intended for manual entry into Smartsheet. Budget fields stay blank without a budget source.
 
 ## Key files
 
 - `shiny_app/app.R` - local user interface.
 - `R/quarterly_reporting_core.R` - retained-record setup and delivery routing.
 - `RunQuarterlyReport.R` - internal calculation engine.
-- `data/Metadata/` - shared mappings, rules, and budgets to maintain deliberately.
 
 ## Remaining production decisions
 
 1. Test with completed mileage and receipt inputs to demonstrate a fully passing run.
-2. Confirm account-to-category mapping, budgets, and any funder-specific presentation rules.
-3. Decide whether the accepted `Smartsheet_Draft.csv` process should later be replaced with direct Smartsheet integration.
+2. Confirm the GL account-description rules used to distinguish payroll from expenses, and any funder-specific presentation rules.
+3. Confirm the manual entry workflow for `SmartsheetInput.xlsx` with the reporting team.

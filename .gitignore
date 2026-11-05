@@ -2,6 +2,9 @@
 data/
 quarters/
 smartsheet_refreshes/
+simulated_data/output/*
+!simulated_data/output/.gitkeep
+tmp/simulated_data_build/
 
 # Local RStudio and R session files
 .Rproj.user/

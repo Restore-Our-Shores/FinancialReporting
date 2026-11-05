@@ -1,6 +1,12 @@
 # Shared functions for the quarterly financial reporting workflow.
 # The Shiny app is the user-facing entry point.
 
+reporting_project_root <- local({
+  source_file <- sys.frame(1)$ofile
+  if (!is.null(source_file)) dirname(dirname(normalizePath(source_file, mustWork = TRUE)))
+  else normalizePath(getOption("financial_reporting.root", getwd()), mustWork = TRUE)
+})
+
 quarter_path <- function(quarter_id, root = "quarters") {
   report_name <- trimws(as.character(quarter_id[1]))
   if (!nzchar(report_name)) stop("Report Name is required.")
@@ -24,7 +30,38 @@ source_path <- function(value) {
 
 normalize_gl_headers <- function(headers) {
   normalized <- gsub("[^a-z0-9]+", "_", tolower(trimws(as.character(headers))))
-  gsub("^_+|_+$", "", normalized)
+  normalized <- gsub("^_+|_+$", "", normalized)
+  aliases <- list(
+    posted_dt = c("posted_dt", "posted_date", "posting_date", "transaction_date", "date"),
+    amount = c("amount", "net_amount", "transaction_amount"),
+    gl = c("gl", "gl_account", "g_l_account", "account", "account_number", "account_no"),
+    grant_and_program_name = c("grant_and_program_name", "gl_and_program_name", "grant_program_name", "grant_program", "grant_and_program", "project", "project_name", "program_name"),
+    doc_dt = c("doc_dt", "doc_date", "document_date"),
+    debit = c("debit", "debits", "debit_amount"),
+    credit = c("credit", "credits", "credit_amount"),
+    vendor_name = c("vendor_name", "vendor", "payee", "employee_name"),
+    memo_description = c("memo_description", "memo", "description"),
+    doc = c("doc", "document", "document_number", "doc_no"),
+    txn_no = c("txn_no", "transaction_number", "transaction_no", "transaction_id"),
+    jnl = c("jnl", "journal", "journal_code")
+  )
+  for (key in names(aliases)) normalized[normalized %in% aliases[[key]]] <- key
+  normalized
+}
+
+canonical_gl_columns <- function(gl) {
+  canonical <- c(posted_dt = "Posted dt.", amount = "Amount", gl = "GL",
+    grant_and_program_name = "Grant and Program name", doc_dt = "Doc dt.",
+    debit = "Debit", credit = "Credit", vendor_name = "Vendor name",
+    memo_description = "Memo/Description", doc = "Doc", txn_no = "Txn No", jnl = "JNL")
+  found <- normalize_gl_headers(names(gl))
+  for (key in names(canonical)) {
+    index <- which(found == key)
+    if (length(index) > 1) stop("The GL has multiple columns for ", canonical[[key]], ". Please use distinct column headings.")
+    if (length(index) == 1) names(gl)[index] <- canonical[[key]]
+    else gl[[canonical[[key]]]] <- rep(NA_character_, nrow(gl))
+  }
+  gl
 }
 
 read_gl_export <- function(path, required_columns = c("posted_dt", "amount", "gl", "grant_and_program_name")) {
@@ -36,32 +73,61 @@ read_gl_export <- function(path, required_columns = c("posted_dt", "amount", "gl
     if (!all(required_columns %in% found)) {
       stop("The GL needs columns for: ", paste(required_columns, collapse = ", "), ".")
     }
-    return(gl)
+    return(canonical_gl_columns(gl))
   }
   if (!extension %in% c("xlsx", "xls")) {
     stop("General ledger must be a CSV, XLSX, or XLS file.")
   }
 
+  closest <- character()
+  best_score <- -1L
   for (sheet in readxl::excel_sheets(path)) {
     preview <- tryCatch(
-      readxl::read_excel(path, sheet = sheet, col_names = FALSE, n_max = 50, .name_repair = "minimal"),
+      readxl::read_excel(path, sheet = sheet, col_names = FALSE, n_max = 500, col_types = "text", .name_repair = "minimal"),
       error = function(error) NULL
     )
     if (is.null(preview) || nrow(preview) == 0) next
     for (header_row in seq_len(nrow(preview))) {
       headers <- unlist(preview[header_row, ], use.names = FALSE)
       found <- normalize_gl_headers(headers)
+      score <- sum(required_columns %in% found)
+      if (score > best_score) {
+        best_score <- score
+        closest <- paste0("Sheet '", sheet, "', row ", header_row, ": ", paste(headers[!is.na(headers) & nzchar(headers)], collapse = ", "))
+      }
       if (all(required_columns %in% found)) {
-        return(as.data.frame(readxl::read_excel(
+        return(canonical_gl_columns(as.data.frame(readxl::read_excel(
           path, sheet = sheet, skip = header_row - 1L, col_types = "text", .name_repair = "minimal"
-        ), stringsAsFactors = FALSE))
+        ), stringsAsFactors = FALSE)))
       }
     }
   }
   stop(
     "No transaction table with the required GL columns was found. Expected: ",
-    paste(required_columns, collapse = ", "), "."
+    paste(required_columns, collapse = ", "), ". Closest header row: ", paste(closest, collapse = " ")
   )
+}
+
+parse_gl_date <- function(x) {
+  if (inherits(x, "Date")) return(x)
+  if (inherits(x, "POSIXt")) return(as.Date(x))
+  x <- trimws(as.character(x))
+  raw_number <- suppressWarnings(as.numeric(x))
+  result <- as.Date(rep(NA_real_, length(x)), origin = "1899-12-30")
+  is_number <- is.finite(raw_number)
+  result[is_number] <- as.Date(raw_number[is_number], origin = "1899-12-30")
+  text_date <- !is_number & !is.na(x) & nzchar(x)
+  iso_date <- text_date & grepl("^[0-9]{4}[-/]", x)
+  result[iso_date] <- suppressWarnings(lubridate::ymd(substr(x[iso_date], 1L, 10L), quiet = TRUE))
+  result[text_date & !iso_date] <- suppressWarnings(lubridate::mdy(x[text_date & !iso_date], quiet = TRUE))
+  result
+}
+
+gl_reporting_dates <- function(gl) {
+  dates <- parse_gl_date(gl[["Posted dt."]])
+  dates <- dates[!is.na(dates)]
+  if (length(dates) == 0) return(NULL)
+  list(start = min(dates), end = max(dates))
 }
 
 mileage_workbook_sheets <- function(path) {
@@ -92,8 +158,10 @@ extract_mileage_sheets <- function(workbook_path, project_to_sheet, destination_
   utils::write.csv(mapping, mapping_path, row.names = FALSE, na = "")
 
   logs <- lapply(seq_along(selected), function(index) {
+    # Worksheets can mix numeric entries with notes or blanks in the same
+    # column. Preserve source values as text; parse miles during calculation.
     sheet_data <- as.data.frame(readxl::read_excel(
-      workbook_path, sheet = unname(selected[index]), .name_repair = "minimal"
+      workbook_path, sheet = unname(selected[index]), col_types = "text", .name_repair = "minimal"
     ), stringsAsFactors = FALSE)
     if (nrow(sheet_data) == 0) return(NULL)
     sheet_data[["Project"]] <- names(selected)[index]
@@ -168,27 +236,6 @@ write_settings_file <- function(path, values) {
   utils::write.csv(settings, path, row.names = FALSE, na = "")
 }
 
-snapshot_metadata <- function(metadata_folder, snapshot_folder) {
-  metadata_folder <- source_path(metadata_folder)
-  files <- c("ProjectCrosswalk.csv", "AccountCategoryMap.csv", "ProjectReportingRules.csv", "ByProjectCategoryBudgets.xlsx")
-  missing <- if (is.na(metadata_folder) || !dir.exists(metadata_folder)) files else files[!file.exists(file.path(metadata_folder, files))]
-  if (length(missing) > 0) {
-    stop(
-      "Metadata setup is incomplete. Select the folder containing: ",
-      paste(files, collapse = ", "),
-      ". Missing: ", paste(missing, collapse = ", ")
-    )
-  }
-  dir.create(snapshot_folder, recursive = TRUE, showWarnings = FALSE)
-  for (file_name in files) {
-    source <- file.path(metadata_folder, file_name)
-    destination <- file.path(snapshot_folder, file_name)
-    if (!file.exists(destination) && !file.copy(source, destination, overwrite = FALSE)) {
-      stop("Could not snapshot metadata file: ", source)
-    }
-  }
-}
-
 prepare_quarter <- function(
   quarter_id,
   period_start,
@@ -202,8 +249,7 @@ prepare_quarter <- function(
   fringe_rate = 0.18,
   indirect_rate = 0.10,
   root = "quarters",
-  project_output_root = "",
-  metadata_folder = file.path("data", "Metadata")
+  project_output_root = ""
 ) {
   quarter_dir <- quarter_path(quarter_id, root)
   input_dir <- file.path(quarter_dir, "inputs")
@@ -230,14 +276,11 @@ prepare_quarter <- function(
     internal = file.path(output_dir, "internal"),
     quarterly = file.path(output_dir, "quarterly_report"),
     smartsheet = file.path(output_dir, "smartsheet"),
-    metadata = file.path(quarter_dir, "metadata_snapshot"),
     project_output_root = source_path(project_output_root)
   )
   dir.create(paths$internal, recursive = TRUE, showWarnings = FALSE)
   dir.create(paths$quarterly, recursive = TRUE, showWarnings = FALSE)
   dir.create(paths$smartsheet, recursive = TRUE, showWarnings = FALSE)
-  snapshot_metadata(metadata_folder, paths$metadata)
-
   settings_values <- c(
     "Report name" = trimws(as.character(quarter_id[1])),
     "Reporting period start" = as.character(as.Date(period_start)),
@@ -295,7 +338,8 @@ refresh_rate_outputs <- function(output_dir, settings_path) {
 
   projects <- sort(unique(categories$project_standard))
   category_value <- function(category_name, column_name) {
-    values <- categories[[column_name]][match(projects, categories$project_standard[categories$category == category_name])]
+    category_rows <- categories[categories$category == category_name, , drop = FALSE]
+    values <- category_rows[[column_name]][match(projects, category_rows$project_standard)]
     as.numeric(values)
   }
   payroll <- category_value("Payroll", "current_quarter_spend")
@@ -389,6 +433,76 @@ combine_receipt_pdfs <- function(receipt_files, output_path) {
   output_path
 }
 
+format_smartsheet_summary <- function(path, project_width) {
+  path <- normalizePath(path, mustWork = TRUE)
+  staging <- tempfile("smartsheet_layout_")
+  dir.create(staging)
+  on.exit(unlink(staging, recursive = TRUE), add = TRUE)
+  utils::unzip(path, exdir = staging)
+  sheet_path <- file.path(staging, "xl", "worksheets", "sheet1.xml")
+  sheet <- paste(readLines(sheet_path, warn = FALSE), collapse = "")
+  sheet <- sub("(<worksheet[^>]*>)", '\\1<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>', sheet)
+  columns <- sprintf('<cols><col min="1" max="1" width="%s" customWidth="1"/><col min="2" max="7" width="18" customWidth="1"/></cols>', project_width)
+  sheet <- sub("<sheetData>", paste0(columns, "<sheetData>"), sheet, fixed = TRUE)
+  sheet <- sub('defaultRowHeight="15"', 'defaultRowHeight="20"', sheet, fixed = TRUE)
+  sheet <- sub("</worksheet>", '<pageSetup paperSize="1" orientation="landscape" fitToWidth="1" fitToHeight="1"/></worksheet>', sheet, fixed = TRUE)
+  writeLines(sheet, sheet_path, useBytes = TRUE)
+  zip_binary <- Sys.which("zip")
+  if (nzchar(zip_binary)) {
+    previous_dir <- getwd()
+    on.exit(setwd(previous_dir), add = TRUE, after = FALSE)
+    setwd(staging)
+    status <- utils::zip(path, files = "xl/worksheets/sheet1.xml", flags = "-q", zip = zip_binary)
+    if (status != 0L) stop("Could not format the Smartsheet summary workbook.")
+  } else if (.Platform$OS.type == "windows") {
+    archive <- tempfile("smartsheet_layout_", fileext = ".zip")
+    on.exit(unlink(archive), add = TRUE)
+    quote_ps <- function(x) paste0("'", gsub("'", "''", x, fixed = TRUE), "'")
+    entries <- list.files(staging, full.names = TRUE, all.files = TRUE, no.. = TRUE)
+    command <- paste0("$ErrorActionPreference = 'Stop'; Compress-Archive -LiteralPath ",
+      paste(vapply(entries, quote_ps, character(1)), collapse = ","),
+      " -DestinationPath ", quote_ps(archive), " -Force")
+    status <- system2("powershell.exe", c("-NoProfile", "-NonInteractive", "-Command", shQuote(command)), stdout = FALSE, stderr = FALSE)
+    if (status != 0L || !file.exists(archive) || !file.copy(archive, path, overwrite = TRUE)) {
+      stop("Could not format the Smartsheet summary workbook.")
+    }
+  } else {
+    stop("The zip utility is required to format the Smartsheet summary workbook.")
+  }
+  invisible(path)
+}
+
+build_smartsheet_summary <- function(paths, destination_root) {
+  categories <- utils::read.csv(file.path(paths$internal, "Quarterly_Report_Category_Draft.csv"), check.names = FALSE, stringsAsFactors = FALSE)
+  projects <- sort(unique(categories$project_standard))
+  category_order <- c("Expenses", "Payroll", "Mileage")
+  rows <- data.frame(
+    project_standard = rep(projects, each = 3L),
+    category = rep(category_order, times = length(projects)),
+    stringsAsFactors = FALSE
+  )
+  source_key <- paste(categories$project_standard, categories$category, sep = "\r")
+  if (anyDuplicated(source_key)) stop("Duplicate project/category totals found while creating the Smartsheet summary.")
+  matched <- match(paste(rows$project_standard, rows$category, sep = "\r"), source_key)
+  spend <- categories$current_quarter_spend[matched]
+  budget <- categories$contracted_amount[matched]
+  summary <- data.frame(
+    Project = rows$project_standard,
+    Payroll = ifelse(rows$category == "Payroll", spend, NA_real_),
+    Expenses = ifelse(rows$category == "Expenses", spend, NA_real_),
+    Mileage = ifelse(rows$category == "Mileage", spend, NA_real_),
+    "Spent Amount" = spend,
+    "Total Budget" = budget,
+    "Percent Spent" = ifelse(is.finite(spend) & is.finite(budget) & budget != 0, spend / budget, NA_real_),
+    check.names = FALSE,
+    stringsAsFactors = FALSE
+  )
+  summary_path <- file.path(destination_root, "SmartsheetInput.xlsx")
+  write_project_xlsx(list(Sheet1 = summary), summary_path)
+  format_smartsheet_summary(summary_path, max(32, min(70, max(nchar(projects), 0L) + 3L)))
+  summary_path
+}
+
 build_project_deliverables <- function(paths) {
   settings <- utils::read.csv(paths$settings, check.names = FALSE, stringsAsFactors = FALSE)
   configured_root <- read_setting(settings, "Project deliverables folder")
@@ -397,14 +511,16 @@ build_project_deliverables <- function(paths) {
   } else {
     configured_root
   }
-  report_root <- file.path(destination_root, safe_output_name(read_setting(settings, "Report name")))
+  report_root <- destination_root
   dir.create(report_root, recursive = TRUE, showWarnings = FALSE)
 
   invoice <- utils::read.csv(file.path(paths$internal, "Invoice_Estimate_Draft.csv"), check.names = FALSE, stringsAsFactors = FALSE)
   receipts_path <- file.path(paths$internal, "Receipt_Reconciliation.csv")
   payroll_path <- file.path(paths$internal, "Payroll_Detail.csv")
+  transactions_path <- file.path(paths$internal, "Standardized_GL_Transactions.csv")
   receipts <- if (file.exists(receipts_path)) utils::read.csv(receipts_path, check.names = FALSE, stringsAsFactors = FALSE) else data.frame()
   payroll <- if (file.exists(payroll_path)) utils::read.csv(payroll_path, check.names = FALSE, stringsAsFactors = FALSE) else data.frame()
+  transactions <- if (file.exists(transactions_path)) utils::read.csv(transactions_path, check.names = FALSE, stringsAsFactors = FALSE) else data.frame()
   manifest <- data.frame(Project = character(), Folder = character(), Receipt_Packet = character(), stringsAsFactors = FALSE)
 
   for (project in invoice$Project) {
@@ -418,7 +534,7 @@ build_project_deliverables <- function(paths) {
       check.names = FALSE,
       stringsAsFactors = FALSE
     )
-    write_project_xlsx(list(Project_Summary = summary), file.path(project_folder, "Project_Summary.xlsx"))
+    write_project_xlsx(list(Category_Spend_Summary = summary), file.path(project_folder, "Category_Spend_Summary.xlsx"))
 
     project_receipts <- if (nrow(receipts) > 0 && "project_standard" %in% names(receipts)) {
       receipts[receipts$project_standard == project & receipts$match_status == "Matched", , drop = FALSE]
@@ -430,7 +546,21 @@ build_project_deliverables <- function(paths) {
       project_receipts <- project_receipts[order(project_receipts$packet_date, project_receipts$receipt_file, na.last = TRUE), , drop = FALSE]
       receipt_files <- project_receipts$receipt_file
     }
-    write_project_xlsx(list(Itemized_Expenses = project_receipts), file.path(project_folder, "Itemized_Expenses.xlsx"))
+    project_expenses <- if (nrow(transactions) > 0 && all(c("project_standard", "category") %in% names(transactions))) {
+      transactions[transactions$project_standard == project & transactions$category == "Expenses", , drop = FALSE]
+    } else data.frame()
+    if (nrow(project_expenses) > 0 && nrow(project_receipts) > 0 &&
+        all(c("document_number", "receipt_file", "match_status") %in% names(project_receipts)) &&
+        "document_number" %in% names(project_expenses)) {
+      receipt_links <- unique(project_receipts[c("document_number", "receipt_file", "match_status")])
+      names(receipt_links)[names(receipt_links) == "receipt_file"] <- "receipt_file_link"
+      names(receipt_links)[names(receipt_links) == "match_status"] <- "receipt_match_status"
+      project_expenses <- merge(project_expenses, receipt_links, by = "document_number", all.x = TRUE, sort = FALSE)
+    }
+    if (nrow(project_expenses) == 0) {
+      project_expenses <- data.frame(Message = "No expense transactions were available in the General Ledger for this project.", stringsAsFactors = FALSE)
+    }
+    write_project_xlsx(list(Detailed_Expenses = project_expenses), file.path(project_folder, "Detailed_Expenses.xlsx"))
     packet <- combine_receipt_pdfs(receipt_files, file.path(project_folder, "Receipt_Packet.pdf"))
 
     project_payroll <- if (nrow(payroll) > 0 && "project_standard" %in% names(payroll)) {
@@ -441,11 +571,12 @@ build_project_deliverables <- function(paths) {
     } else {
       project_payroll <- project_payroll[order(project_payroll$payroll_date, project_payroll$staff_name), , drop = FALSE]
     }
-    write_project_xlsx(list(Payroll_By_Date_Staff = project_payroll), file.path(project_folder, "Payroll_By_Date_and_Staff.xlsx"))
+    write_project_xlsx(list(Hourly_Time_Entries = project_payroll), file.path(project_folder, "Hourly_Time_Entries.xlsx"))
     manifest <- rbind(manifest, data.frame(Project = project, Folder = project_folder, Receipt_Packet = ifelse(is.na(packet), "No PDF packet created", packet), stringsAsFactors = FALSE))
   }
   utils::write.csv(manifest, file.path(report_root, "Project_Deliverables_Manifest.csv"), row.names = FALSE, na = "")
-  list(root = report_root, manifest = manifest)
+  smartsheet_summary <- build_smartsheet_summary(paths, report_root)
+  list(root = report_root, manifest = manifest, smartsheet_summary = smartsheet_summary)
 }
 
 copy_deliverables <- function(paths, delivery) {
@@ -470,15 +601,11 @@ run_quarterly_pipeline <- function(paths, delivery = c("both", "quarterly_report
   if (is.na(paths$general_ledger) || !file.exists(paths$general_ledger)) {
     stop("General ledger is missing. Select it in the reporting workflow.")
   }
-  old_options <- options(
-    quarterly.settings_path = paths$settings,
-    quarterly.crosswalk_path = file.path(paths$metadata, "ProjectCrosswalk.csv"),
-    quarterly.account_map_path = file.path(paths$metadata, "AccountCategoryMap.csv"),
-    quarterly.rules_path = file.path(paths$metadata, "ProjectReportingRules.csv"),
-    quarterly.budget_path = file.path(paths$metadata, "ByProjectCategoryBudgets.xlsx")
-  )
+  old_options <- options(quarterly.settings_path = paths$settings)
   on.exit(options(old_options), add = TRUE)
-  sys.source("RunQuarterlyReport.R", envir = new.env(parent = globalenv()))
+  engine_path <- file.path(reporting_project_root, "RunQuarterlyReport.R")
+  if (!file.exists(engine_path)) stop("Reporting script is missing: ", engine_path)
+  sys.source(engine_path, envir = new.env(parent = globalenv()))
   refresh_rate_outputs(paths$internal, paths$settings)
   copy_deliverables(paths, delivery)
   project_deliverables <- if (delivery %in% c("quarterly_report", "both")) build_project_deliverables(paths) else NULL

@@ -15,10 +15,6 @@ settings_path <- getOption("quarterly.settings_path", NA_character_)
 if (is.na(settings_path) || !file.exists(settings_path)) {
   stop("RunQuarterlyReport.R is an internal engine. Start the workflow with shiny::runApp(\"shiny_app\", launch.browser = TRUE).")
 }
-crosswalk_path <- getOption("quarterly.crosswalk_path", file.path("data", "Metadata", "ProjectCrosswalk.csv"))
-account_map_path <- getOption("quarterly.account_map_path", file.path("data", "Metadata", "AccountCategoryMap.csv"))
-rules_path <- getOption("quarterly.rules_path", file.path("data", "Metadata", "ProjectReportingRules.csv"))
-budget_path <- getOption("quarterly.budget_path", file.path("data", "Metadata", "ByProjectCategoryBudgets.xlsx"))
 
 settings <- utils::read.csv(settings_path, check.names = FALSE, stringsAsFactors = FALSE)
 setting_value <- function(name) {
@@ -37,16 +33,6 @@ parse_number_safe <- function(x) {
   value <- suppressWarnings(as.numeric(str_remove_all(x, "[,$()]")))
   ifelse(negative & !is.na(value), -value, value)
 }
-parse_gl_date <- function(x) {
-  x <- trimws(as.character(x))
-  raw_number <- suppressWarnings(as.numeric(x))
-  result <- as.Date(rep(NA_real_, length(x)), origin = "1899-12-30")
-  is_number <- !is.na(raw_number)
-  result[is_number] <- as.Date(raw_number[is_number], origin = "1899-12-30")
-  text_date <- !is_number & !is.na(x) & nzchar(x)
-  result[text_date] <- suppressWarnings(mdy(x[text_date]))
-  result
-}
 read_optional_table <- function(path) {
   if (is.na(path) || !file.exists(path)) return(NULL)
   extension <- tolower(tools::file_ext(path))
@@ -54,18 +40,14 @@ read_optional_table <- function(path) {
   if (extension %in% c("xlsx", "xls")) return(as.data.frame(read_excel(path)))
   stop("Unsupported input type: ", extension, ". Use CSV, XLSX, or XLS.")
 }
-normal_names <- function(x) str_replace_all(str_to_lower(x), "[^a-z0-9]+", "_")
+normal_names <- function(x) normalize_gl_headers(x)
 find_column <- function(data, patterns) {
   names_normal <- normal_names(names(data))
   matches <- which(vapply(names_normal, function(name) any(str_detect(name, patterns)), logical(1)))
   if (length(matches) == 0) return(NA_integer_)
   matches[1]
 }
-map_project <- function(project, crosswalk) {
-  match_index <- match(trimws(as.character(project)), crosswalk[["Source Project Name"]])
-  mapped <- crosswalk[["Standard Project Name"]][match_index]
-  ifelse(is.na(mapped) | !nzchar(mapped), trimws(as.character(project)), mapped)
-}
+map_project <- function(project) trimws(as.character(project))
 write_csv <- function(data, name, output_dir) {
   utils::write.csv(data, file.path(output_dir, name), row.names = FALSE, na = "")
 }
@@ -90,12 +72,8 @@ project_scope <- if (is.na(project_scope_value) || !nzchar(trimws(project_scope_
 if (is.na(gl_path) || !file.exists(gl_path)) stop("General ledger file is missing. Supply it in the R Markdown parameter dialog.")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-crosswalk <- utils::read.csv(crosswalk_path, check.names = FALSE, stringsAsFactors = FALSE)
-account_map <- utils::read.csv(account_map_path, check.names = FALSE, stringsAsFactors = FALSE, colClasses = "character")
-rules <- utils::read.csv(rules_path, check.names = FALSE, stringsAsFactors = FALSE)
-
 # 1. Load and standardize the GL. The shared reader finds the transaction
-# table even when a Finance export places its headings below report metadata.
+# table even when a Finance export places its headings below report notes.
 gl_raw <- read_gl_export(gl_path)
 project_column_candidates <- c("grant_and_program_name", "gl_and_program_name")
 project_column_index <- which(normal_names(names(gl_raw)) %in% project_column_candidates)[1]
@@ -126,12 +104,14 @@ standardized_gl <- gl_raw %>%
   ) %>%
   filter(!is.na(transaction_date), !is.na(gl_account), nzchar(gl_account)) %>%
   mutate(
-    project_standard = map_project(project_original, crosswalk),
-    category = account_map[["Reporting Category"]][match(gl_account, account_map[["GL Account"]])],
-    include_in_reports = account_map[["Include in Reports"]][match(gl_account, account_map[["GL Account"]])],
-    category = coalesce(category, "Unmapped"),
-    include_in_reports = coalesce(include_in_reports, "No"),
-    net_amount = debit - credit,
+    project_standard = map_project(project_original),
+    category = if_else(
+      str_detect(str_to_lower(paste(gl_account_description, description, vendor)), "payroll|salary|salaries|wage|wages|hourly|fringe|benefit"),
+      "Payroll",
+      "Expenses"
+    ),
+    include_in_reports = "Yes",
+    net_amount = if_else(is.na(parse_number_safe(Debit)) & is.na(parse_number_safe(Credit)), source_amount, debit - credit),
     source_difference = net_amount - source_amount,
     source = "gl",
     source_file = basename(gl_path),
@@ -201,7 +181,7 @@ receipt_inventory <- tibble(
   receipt_vendor = if (length(receipt_files) == 0) character(0) else vapply(receipt_files, receipt_vendor_key, character(1))
 ) %>%
   mutate(
-    project_hint = if_else(!is.na(receipt_root) & normalizePath(dirname(receipt_file)) != receipt_root, as.character(map_project(project_folder, crosswalk)), NA_character_),
+    project_hint = if_else(!is.na(receipt_root) & normalizePath(dirname(receipt_file)) != receipt_root, as.character(map_project(project_folder)), NA_character_),
     amount_status = if_else(is.na(receipt_amount), "Amount missing from filename", "Amount found in filename")
   )
 
@@ -290,7 +270,7 @@ payroll_summary <- gl_actuals %>%
   filter(category == "Payroll") %>%
   transmute(project_standard, payroll_from_gl = gl_actual, status = "From GL")
 
-# 4. Mileage requires Maggie's log and a project rule with an approved rate.
+# 4. Mileage uses the rate supplied in the app for this report.
 mileage_raw <- tryCatch(read_optional_table(mileage_path), error = function(e) e)
 mileage_summary <- tibble(project_standard = character(0), miles = numeric(0), mileage_cost = numeric(0), status = character(0))
 if (inherits(mileage_raw, "error") || is.null(mileage_raw)) {
@@ -302,17 +282,14 @@ if (inherits(mileage_raw, "error") || is.null(mileage_raw)) {
     mileage_summary <- tibble(project_standard = sort(unique(standardized_gl$project_standard)), miles = NA_real_, mileage_cost = NA_real_, status = "Mileage log needs Project and Miles columns")
   } else {
     mileage_summary <- mileage_raw %>%
-      transmute(project_standard = map_project(.data[[names(mileage_raw)[project_column]]], crosswalk), miles = parse_number_safe(.data[[names(mileage_raw)[miles_column]]])) %>%
+      transmute(project_standard = map_project(.data[[names(mileage_raw)[project_column]]]), miles = parse_number_safe(.data[[names(mileage_raw)[miles_column]]])) %>%
       group_by(project_standard) %>% summarise(miles = sum(miles, na.rm = TRUE), .groups = "drop") %>%
-      left_join(rules %>% transmute(project_standard = `Standard Project Name`, mileage_rate = `Mileage Rate`), by = "project_standard") %>%
-      mutate(mileage_cost = if_else(is.na(mileage_rate), NA_real_, miles * mileage_rate), status = if_else(is.na(mileage_rate), "Mileage rate missing", "Pass"))
+      mutate(mileage_rate = as.numeric(setting_value("Mileage reimbursement rate")), mileage_cost = miles * mileage_rate, status = if_else(is.na(mileage_rate), "Mileage rate missing", "Pass"))
   }
 }
 
-# 5. Use the configured budget table for current-period context only.
-budget_metadata <- read_excel(budget_path) %>%
-  transmute(project_standard = `Project Name`, item = Item, contracted_amount = as.numeric(Value), category = str_extract(Item, "^(Payroll|Expenses|Mileage)"), item_type = str_extract(Item, "(Budgeted|Spent)$"))
-budgets <- budget_metadata %>% filter(item_type == "Budgeted", !is.na(category)) %>% select(project_standard, category, contracted_amount)
+# 5. Budget values stay blank until a dedicated budget source is added.
+budgets <- tibble(project_standard = character(0), category = character(0), contracted_amount = numeric(0))
 projects <- sort(unique(c(standardized_gl$project_standard, budgets$project_standard)))
 categories <- c("Payroll", "Expenses", "Mileage")
 
@@ -364,9 +341,9 @@ input_readiness <- tibble(
 )
 
 reconciliation_checks <- tibble(
-  check = c("GL source total less standardized net for selected projects", "Unmapped project transactions", "Unmapped account transactions", "Possible duplicate transactions", "Expense receipt QC projects passed"),
-  value = c(sum(standardized_gl$net_amount) - scoped_source_total, sum(standardized_gl$project_standard == ""), sum(standardized_gl$category == "Unmapped"), sum(standardized_gl$possible_duplicate), sum(expense_receipt_qc$status == "Pass")),
-  status = c(if_else(abs(sum(standardized_gl$net_amount) - scoped_source_total) < 0.005, "Pass", "Review"), if_else(any(standardized_gl$project_standard == ""), "Review", "Pass"), if_else(any(standardized_gl$category == "Unmapped"), "Review", "Pass"), if_else(any(standardized_gl$possible_duplicate), "Review", "Pass"), "Review")
+  check = c("GL source total less standardized net for selected projects", "Blank project transactions", "Payroll/expense classification is based on GL text", "Possible duplicate transactions", "Expense receipt QC projects passed"),
+  value = c(sum(standardized_gl$net_amount) - scoped_source_total, sum(standardized_gl$project_standard == ""), "Review account descriptions", sum(standardized_gl$possible_duplicate), sum(expense_receipt_qc$status == "Pass")),
+  status = c(if_else(abs(sum(standardized_gl$net_amount) - scoped_source_total) < 0.005, "Pass", "Review"), if_else(any(standardized_gl$project_standard == ""), "Review", "Pass"), "Review", if_else(any(standardized_gl$possible_duplicate), "Review", "Pass"), "Review")
 )
 
 write_csv(project_scope_summary, "Project_Scope.csv", output_dir)

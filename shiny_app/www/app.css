@@ -1,0 +1,51 @@
+/* Restore Our Shores styling, adapted from ROS_OysterReefDataEntry/www/app.css
+   for this application's Bootstrap 3 Shiny controls. */
+:root { --ros-blue:#035b7f; --ros-aqua:#1d90a5; --ros-lime:#a6be44; --ros-ink:#173743; }
+body { background:#f4f8fa; color:var(--ros-ink); font-family:Arial,sans-serif; }
+.navbar { background:#fff !important; border:0; border-bottom:1px solid #d6e2e7 !important; box-shadow:0 2px 14px rgba(3,91,127,.08); margin-bottom:20px; min-height:76px; }
+.navbar-brand { height:auto; padding:12px 15px; }
+.brand-lockup { display:flex; align-items:center; gap:12px; color:var(--ros-blue); }
+.brand-logo { width:150px; height:48px; object-fit:contain; object-position:left center; }
+.brand-title { display:flex; flex-direction:column; padding-left:12px; border-left:1px solid #cfdee3; font-weight:700; line-height:1.15; font-size:18px; }
+.brand-title small { margin-top:5px; color:#607d86; font-size:10px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
+.navbar-nav { margin:12px 0 12px 20px; }
+.navbar-default .navbar-nav > li > a { margin:3px 2px; border-radius:6px; color:#385864; font-weight:600; }
+.navbar-default .navbar-nav > .active > a,
+.navbar-default .navbar-nav > .active > a:hover,
+.navbar-default .navbar-nav > .active > a:focus { background:var(--ros-blue); color:#fff; }
+.navbar-default .navbar-nav > li > a:hover { background:#eaf4f7; color:var(--ros-blue); }
+.app-hero { position:relative; overflow:hidden; margin:0 0 24px; padding:26px 30px; border-radius:16px; background:linear-gradient(120deg,#035b7f 0%,#08738d 58%,#1d90a5 100%); box-shadow:0 12px 32px rgba(3,91,127,.2); color:#fff; }
+.app-hero::after { content:''; position:absolute; top:-100px; right:-65px; width:240px; height:240px; border:38px solid rgba(255,255,255,.09); border-radius:50%; pointer-events:none; }
+.app-hero h1 { margin:0 0 8px; color:#fff; font-size:32px; font-weight:700; }
+.app-hero .lead { max-width:760px; margin-bottom:18px; color:#eaf7fa; font-size:17px; }
+.eyebrow { display:inline-block; margin-bottom:8px; color:#e7f1b9; font-size:11px; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+.workflow { position:relative; z-index:1; display:flex; flex-wrap:wrap; gap:10px; }
+.workflow-step { display:flex; align-items:center; gap:8px; padding:6px 12px; border:1px solid rgba(255,255,255,.28); border-radius:999px; background:rgba(255,255,255,.1); font-size:13px; font-weight:600; }
+.workflow-step b { display:grid; place-items:center; width:23px; height:23px; border-radius:50%; background:var(--ros-lime); color:#233b15; }
+.well { background:#fff; border:1px solid #d9e5e9; border-radius:16px; box-shadow:0 7px 24px rgba(26,70,86,.08); padding:22px; }
+h2 { margin:0 0 20px; color:var(--ros-blue); font-size:25px; font-weight:700; }
+.well h3 { margin:-22px -22px 20px; padding:16px 22px; border-bottom:1px solid #d9e5e9; border-radius:16px 16px 0 0; background:linear-gradient(90deg,#eaf4f7,#f7fafb); color:var(--ros-blue); font-size:20px; font-weight:700; }
+h3,h4 { color:var(--ros-blue); font-weight:700; }
+label { color:#284b58; font-weight:700; }
+.form-control,.selectize-input { border-color:#bdd0d7; border-radius:8px; }
+.form-control:focus,.selectize-input.focus { border-color:var(--ros-aqua); box-shadow:0 0 0 3px rgba(29,144,165,.16); }
+.selectize-control.multi .selectize-input > div { background:#eaf4f7; color:var(--ros-blue); border-radius:4px; }
+.help-block { color:#607d86; }
+.btn { border-radius:7px; white-space:normal; }
+.btn.btn-primary { color:#fff; background:var(--ros-blue); border-color:var(--ros-blue); }
+.btn.btn-primary:hover,.btn.btn-primary:focus,.btn.btn-primary:active { color:#fff; background:#024761; border-color:#024761; }
+.btn-default { color:var(--ros-blue); border-color:#bdd0d7; background:#fff; }
+.btn-default:hover { color:#024761; background:#eaf4f7; border-color:var(--ros-aqua); }
+button.action-button { margin-bottom:6px; }
+.status-note { padding:14px 16px; border-left:4px solid var(--ros-lime); border-radius:6px; background:#eaf4f7; margin:16px 0; }
+.warning-note { padding:12px; border-left:4px solid #b7791f; background:#fffaf0; margin:12px 0; }
+pre.shiny-text-output { background:#f7fafb; border:1px solid #d9e5e9; border-radius:8px; color:var(--ros-ink); white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
+.shiny-date-input { width:100%; }
+.shiny-date-input input { width:100%; }
+.datepicker-dropdown { min-width:240px; background:#fff; color:var(--ros-ink); }
+.datepicker table { width:100%; }
+.datepicker .datepicker-switch,.datepicker .prev,.datepicker .next { color:var(--ros-ink) !important; background:#fff; font-weight:600; visibility:visible; opacity:1; }
+.datepicker table tr td.active.active { background:var(--ros-blue); }
+:focus-visible { outline:2px solid var(--ros-aqua); outline-offset:3px; }
+@media (max-width:1100px) { .brand-title { display:none; } .navbar-nav { margin-left:0; } .well { padding:16px; } .well h3 { margin:-16px -16px 18px; padding:14px 16px; } }
+@media (max-width:767px) { .navbar { min-height:72px; } .navbar-toggle { margin-top:18px; } .navbar-nav { margin:8px 0; } .app-hero { padding:22px; border-radius:12px; } .app-hero h1 { font-size:27px; } .brand-logo { width:130px; } }
