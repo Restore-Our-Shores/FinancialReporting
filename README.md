@@ -18,7 +18,7 @@ Launch from the project root:
 source("dev/run_dev.R")
 ```
 
-Both the development launcher and standalone script activate the project environment. Restart your current R session once after this migration so it uses renv.
+Both the development launcher and standalone script activate the project environment. Restart your current R session once after this migration so it uses renv and clears functions from the earlier sourced app. Workspace restoration and saving are disabled for this project to prevent old global functions from masking package functions.
 
 Upload a GL and optional mileage workbook, choose projects, confirm mileage worksheet matches, set reporting dates and approved rates, upload receipt files, and build reports. The app provides a full ZIP bundle and a separate `SmartsheetInput.xlsx` download. Receipt filenames must retain their dollar amount; a date helps disambiguate matches. You can select multiple receipts, including files from different project subfolders. Folder-based project hints remain available in the script workflow.
 
