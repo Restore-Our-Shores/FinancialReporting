@@ -49,3 +49,19 @@ pre.shiny-text-output { background:#f7fafb; border:1px solid #d9e5e9; border-rad
 :focus-visible { outline:2px solid var(--ros-aqua); outline-offset:3px; }
 @media (max-width:1100px) { .brand-title { display:none; } .navbar-nav { margin-left:0; } .well { padding:16px; } .well h3 { margin:-16px -16px 18px; padding:14px 16px; } }
 @media (max-width:767px) { .navbar { min-height:72px; } .navbar-toggle { margin-top:18px; } .navbar-nav { margin:8px 0; } .app-hero { padding:22px; border-radius:12px; } .app-hero h1 { font-size:27px; } .brand-logo { width:130px; } }
+
+/* Side-by-side receipt review */
+.review-heading { margin: 14px 0 20px; }
+.review-panel { background: #fff; border: 1px solid #dbe5e3; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+.review-workspace { margin-top: 20px; }
+.review-panel h3 { margin-top: 0; }
+.review-progress { display: flex; flex-wrap: wrap; gap: 18px; padding: 12px 0; color: #20554e; }
+.review-actions, .review-edit-actions, .review-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.review-actions { justify-content: flex-end; }
+.receipt-preview { border: 1px solid #dbe5e3; border-radius: 8px; background: #f3f6f5; margin-top: 14px; }
+.receipt-image { display: block; max-width: 100%; max-height: 760px; object-fit: contain; margin: 14px auto; border: 1px solid #dbe5e3; }
+.receipt-empty { min-height: 280px; display: grid; place-content: center; background: #f3f6f5; color: #4a6661; margin-top: 14px; border-radius: 8px; padding: 24px; }
+.expense-amount { font-size: 18px; font-weight: 600; color: #20554e; }
+.review-panel table.dataTable tbody tr.selected { background-color: #d7eee9 !important; color: #163d36 !important; }
+.review-panel .warning-note { margin-bottom: 10px; }
+@media (max-width: 991px) { .review-actions { justify-content: flex-start; } .receipt-preview { height: 620px; } }

@@ -306,6 +306,13 @@ read_setting <- function(settings, name) {
   value[1]
 }
 
+report_date_suffix <- function(settings_path) {
+  settings <- utils::read.csv(settings_path, check.names = FALSE, stringsAsFactors = FALSE)
+  start <- as.Date(read_setting(settings, "Reporting period start"))
+  end <- as.Date(read_setting(settings, "Reporting period end"))
+  paste(format(start, "%Y-%m-%d"), "to", format(end, "%Y-%m-%d"), sep = "_")
+}
+
 refresh_rate_outputs <- function(output_dir, settings_path) {
   settings <- utils::read.csv(settings_path, check.names = FALSE, stringsAsFactors = FALSE)
   mileage_rate <- suppressWarnings(as.numeric(read_setting(settings, "Mileage reimbursement rate")))
@@ -462,18 +469,27 @@ build_smartsheet_summary <- function(paths, destination_root) {
   matched <- match(paste(rows$project_standard, rows$category, sep = "\r"), source_key)
   spend <- categories$current_period_spend[matched]
   budget <- categories$contracted_amount[matched]
+  settings <- utils::read.csv(paths$settings, check.names = FALSE, stringsAsFactors = FALSE)
+  fringe_rate <- as.numeric(read_setting(settings, "Payroll fringe rate"))
+  indirect_rate <- as.numeric(read_setting(settings, "Indirect rate"))
+  wide <- lapply(projects, function(project) {
+    value <- function(category) {
+      index <- which(categories$project_standard == project & categories$category == category)
+      if (length(index)) as.numeric(categories$current_period_spend[index[1]]) else NA_real_
+    }
+    payroll <- value("Payroll"); expenses <- value("Expenses"); mileage <- value("Mileage")
+    fringe <- payroll * fringe_rate
+    direct_costs <- payroll + fringe + expenses + mileage
+    indirect_amount <- direct_costs * indirect_rate
+    data.frame(Project = project, Payroll = payroll, Fringe = fringe, Expenses = expenses,
+      Mileage = mileage, `Total Direct Costs` = direct_costs, Indirect = indirect_amount,
+      `Invoice Total` = direct_costs + indirect_amount,
+      check.names = FALSE)
+  })
   summary <- data.frame(
-    Project = rows$project_standard,
-    Payroll = ifelse(rows$category == "Payroll", spend, NA_real_),
-    Expenses = ifelse(rows$category == "Expenses", spend, NA_real_),
-    Mileage = ifelse(rows$category == "Mileage", spend, NA_real_),
-    "Spent Amount" = spend,
-    "Total Budget" = budget,
-    "Percent Spent" = ifelse(is.finite(spend) & is.finite(budget) & budget != 0, spend / budget, NA_real_),
-    check.names = FALSE,
-    stringsAsFactors = FALSE
-  )
-  summary_path <- file.path(destination_root, "SmartsheetInput.xlsx")
+    do.call(rbind, wide), check.names = FALSE, stringsAsFactors = FALSE)
+  suffix <- report_date_suffix(paths$settings)
+  summary_path <- file.path(destination_root, paste0("Smartsheet_Input_", suffix, ".xlsx"))
   write_project_xlsx(list(Sheet1 = summary), summary_path)
   format_smartsheet_summary(summary_path, max(32, min(70, max(nchar(projects), 0L) + 3L)))
   summary_path
@@ -500,6 +516,7 @@ build_project_deliverables <- function(paths) {
   manifest <- data.frame(Project = character(), Folder = character(), Receipt_Packet = character(), stringsAsFactors = FALSE)
 
   output_names <- vapply(invoice$Project, safe_output_name, character(1))
+  suffix <- report_date_suffix(paths$settings)
   if (anyDuplicated(tolower(output_names))) {
     stop("Selected project names produce duplicate output folder names. Use distinct project names in the GL.")
   }
@@ -508,14 +525,17 @@ build_project_deliverables <- function(paths) {
     project_folder <- file.path(report_root, safe_output_name(project))
     dir.create(project_folder, recursive = TRUE, showWarnings = FALSE)
     summary_row <- invoice[invoice$Project == project, , drop = FALSE]
+    rates <- utils::read.csv(paths$settings, check.names = FALSE, stringsAsFactors = FALSE)
+    fringe_rate <- as.numeric(read_setting(rates, "Payroll fringe rate"))
+    mileage_rate <- as.numeric(read_setting(rates, "Mileage reimbursement rate"))
     summary <- data.frame(
-      Category = c("Payroll", "Payroll Fringe", "Mileage", "Expenses", "Direct Costs", "Indirect Costs", "Total Invoice Amount", "Invoice Status"),
+      Category = c("Payroll", paste0("Payroll Fringe (", format(fringe_rate * 100, trim = TRUE), "%)"), paste0("Mileage ($", format(mileage_rate, nsmall = 3), "/mile)"), "Expenses", "Direct Costs", "Indirect Costs", "Total Invoice Amount", "Invoice Status"),
       Amount = c(summary_row$Payroll, summary_row[["Payroll Fringe"]], summary_row$Mileage, summary_row$Expenses, summary_row[["Direct Costs"]], summary_row[["Indirect Costs"]], summary_row[["Invoice Estimate"]], NA_real_),
       Status = c(rep("", 7), summary_row[["Invoice Status"]]),
       check.names = FALSE,
       stringsAsFactors = FALSE
     )
-    write_project_xlsx(list(Category_Spend_Summary = summary), file.path(project_folder, "Category_Spend_Summary.xlsx"))
+    write_project_xlsx(list(Category_Spend_Summary = summary), file.path(project_folder, paste0("Category_Spend_Summary_", suffix, ".xlsx")))
 
     project_receipts <- if (nrow(receipts) > 0 && "project_standard" %in% names(receipts)) {
       receipts[receipts$project_standard == project & receipts$match_status == "Matched", , drop = FALSE]
@@ -531,18 +551,26 @@ build_project_deliverables <- function(paths) {
       transactions[transactions$project_standard == project & transactions$category == "Expenses", , drop = FALSE]
     } else data.frame()
     if (nrow(project_expenses) > 0 && nrow(project_receipts) > 0 &&
-        all(c("document_number", "receipt_file", "match_status") %in% names(project_receipts)) &&
-        "document_number" %in% names(project_expenses)) {
-      receipt_links <- unique(project_receipts[c("document_number", "receipt_file", "match_status")])
+        all(c("source_row", "receipt_file", "match_status") %in% names(project_receipts)) &&
+        "source_row" %in% names(project_expenses)) {
+      receipt_links <- unique(project_receipts[c("source_row", "receipt_file", "match_status")])
       names(receipt_links)[names(receipt_links) == "receipt_file"] <- "receipt_file_link"
       names(receipt_links)[names(receipt_links) == "match_status"] <- "receipt_match_status"
-      project_expenses <- merge(project_expenses, receipt_links, by = "document_number", all.x = TRUE, sort = FALSE)
+      project_expenses <- merge(project_expenses, receipt_links, by = "source_row", all.x = TRUE, sort = FALSE)
     }
+    posted <- if ("transaction_date" %in% names(project_expenses)) project_expenses$transaction_date else rep(NA_character_, nrow(project_expenses))
+    doc <- if ("document_date" %in% names(project_expenses)) project_expenses$document_date else rep(NA_character_, nrow(project_expenses))
+    amount <- if ("net_amount" %in% names(project_expenses)) project_expenses$net_amount else rep(NA_real_, nrow(project_expenses))
+    receipt_name <- if ("receipt_file_link" %in% names(project_expenses)) basename(project_expenses$receipt_file_link) else rep(NA_character_, nrow(project_expenses))
     if (nrow(project_expenses) == 0) {
       project_expenses <- data.frame(Message = "No expense transactions were available in the General Ledger for this project.", stringsAsFactors = FALSE)
     }
-    write_project_xlsx(list(Detailed_Expenses = project_expenses), file.path(project_folder, "Detailed_Expenses.xlsx"))
-    packet <- combine_receipt_pdfs(receipt_files, file.path(project_folder, "Receipt_Packet.pdf"))
+    expense_sheet <- data.frame(`Posted Dt.` = posted, `Doc Dt.` = doc, Amount = amount, `File name` = receipt_name, check.names = FALSE)
+    expense_sheet <- rbind(expense_sheet, data.frame(`Posted Dt.` = "TOTAL", `Doc Dt.` = "", Amount = sum(amount, na.rm = TRUE), `File name` = "", check.names = FALSE))
+    write_project_xlsx(list(Detailed_Expenses = expense_sheet), file.path(project_folder, paste0("Detailed_Expenses_", suffix, ".xlsx")))
+    packet_path <- file.path(project_folder, paste0("Receipt_Packet_", suffix, ".pdf"))
+    if (file.exists(packet_path)) unlink(packet_path)
+    packet <- combine_receipt_pdfs(receipt_files, packet_path)
 
     project_payroll <- if (nrow(payroll) > 0 && "project_standard" %in% names(payroll)) {
       payroll[payroll$project_standard == project, , drop = FALSE]
@@ -552,10 +580,18 @@ build_project_deliverables <- function(paths) {
     } else {
       project_payroll <- project_payroll[order(project_payroll$payroll_date, project_payroll$staff_name), , drop = FALSE]
     }
-    write_project_xlsx(list(Hourly_Time_Entries = project_payroll), file.path(project_folder, "Hourly_Time_Entries.xlsx"))
+    if ("status" %in% names(project_payroll)) project_payroll$status <- NULL
+    if (all(c("project_standard", "payroll_date", "staff_name", "payroll_amount") %in% names(project_payroll))) {
+      payroll_total <- sum(project_payroll$payroll_amount, na.rm = TRUE)
+      fringe_amount <- payroll_total * fringe_rate
+      project_payroll <- rbind(project_payroll,
+        data.frame(project_standard = project, payroll_date = "TOTAL", staff_name = "", payroll_amount = payroll_total, check.names = FALSE),
+        data.frame(project_standard = project, payroll_date = paste0("Fringe (", format(fringe_rate * 100, trim = TRUE), "%)"), staff_name = "", payroll_amount = fringe_amount, check.names = FALSE),
+        data.frame(project_standard = project, payroll_date = "TOTAL", staff_name = "", payroll_amount = payroll_total + fringe_amount, check.names = FALSE))
+    }
+    write_project_xlsx(list(Hourly_Time_Entries = project_payroll), file.path(project_folder, paste0("Hourly_Time_Entries_", suffix, ".xlsx")))
     manifest <- rbind(manifest, data.frame(Project = project, Folder = project_folder, Receipt_Packet = ifelse(is.na(packet), "No PDF packet created", packet), stringsAsFactors = FALSE))
   }
-  utils::write.csv(manifest, file.path(report_root, "Project_Deliverables_Manifest.csv"), row.names = FALSE, na = "")
   smartsheet_summary <- build_smartsheet_summary(paths, report_root)
   list(root = report_root, manifest = manifest, smartsheet_summary = smartsheet_summary)
 }

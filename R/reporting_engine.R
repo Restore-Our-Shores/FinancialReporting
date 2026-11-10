@@ -180,7 +180,7 @@ receipt_inventory <- tibble(
   )
 
 expense_lines <- standardized_gl %>%
-  filter(include_in_reports == "Yes", category == "Expenses", net_amount > 0) %>%
+  filter(include_in_reports == "Yes", category == "Expenses") %>%
   mutate(match_date = if_else(!is.na(document_date), document_date, transaction_date))
 assigned_receipt <- rep(NA_integer_, nrow(expense_lines))
 matched_expense <- rep(NA_integer_, nrow(receipt_inventory))
@@ -215,9 +215,22 @@ for (receipt_index in seq_len(nrow(receipt_inventory))) {
     match_status[receipt_index] <- "Review: multiple GL candidates"
   }
 }
+match_method <- rep("Automatic", nrow(receipt_inventory))
+override_path <- file.path(dirname(settings_path), "review", "Receipt_Match_Overrides.csv")
+if (file.exists(override_path)) {
+  overrides <- utils::read.csv(override_path, stringsAsFactors = FALSE)
+  relative <- receipt_relative_paths(receipt_inventory$receipt_file, receipt_folder)
+  validate_receipt_assignments(overrides, relative, expense_lines$source_row)
+  overrides <- overrides[match(relative, overrides$receipt_relative_path), , drop = FALSE]
+  matched_expense <- match(overrides$source_row, expense_lines$source_row)
+  match_status <- ifelse(is.na(matched_expense), "Unmatched after review", "Matched")
+  match_method <- overrides$match_method
+}
 receipt_reconciliation <- receipt_inventory %>%
   mutate(
     match_status = match_status,
+    match_method = match_method,
+    source_row = if_else(is.na(matched_expense), NA_integer_, as.integer(expense_lines$source_row[matched_expense])),
     project_standard = if_else(is.na(matched_expense), NA_character_, expense_lines$project_standard[matched_expense]),
     transaction_date = if_else(is.na(matched_expense), as.Date(NA), expense_lines$transaction_date[matched_expense]),
     document_date = if_else(is.na(matched_expense), as.Date(NA), expense_lines$document_date[matched_expense]),
@@ -230,7 +243,8 @@ receipt_reconciliation <- receipt_inventory %>%
 receipt_summary <- receipt_reconciliation %>%
   filter(match_status == "Matched") %>%
   group_by(project_standard) %>%
-  summarise(receipt_packet_total = sum(receipt_amount), receipt_count = n(), .groups = "drop")
+  summarise(receipt_packet_total = sum(receipt_amount), receipt_count = n(),
+    line_match_issues = sum(!is.finite(.data$receipt_amount) | !is.finite(.data$gl_amount) | abs(.data$receipt_amount - .data$gl_amount) > expense_tolerance), .groups = "drop")
 
 gl_expenses <- gl_actuals %>%
   filter(category == "Expenses") %>%
@@ -242,6 +256,7 @@ expense_receipt_qc <- full_join(gl_expenses, receipt_summary, by = "project_stan
       length(receipt_files) == 0 ~ "Receipt packet missing",
       is.na(receipt_packet_total) ~ "No confirmed receipt-to-GL matches",
       is.na(gl_expenses) ~ "Receipt has no matching GL expense",
+      .data$line_match_issues > 0 ~ "Review receipt-to-line differences",
       abs(difference) <= expense_tolerance ~ "Pass",
       TRUE ~ "Review variance"
     )
@@ -255,8 +270,7 @@ payroll_detail <- standardized_gl %>%
     project_standard,
     payroll_date = as.character(coalesce(document_date, transaction_date)),
     staff_name = coalesce(na_if(str_squish(vendor), ""), "Not listed in GL"),
-    payroll_amount = net_amount,
-    status = "From GL"
+    payroll_amount = net_amount
   ) %>%
   arrange(project_standard, payroll_date, staff_name)
 

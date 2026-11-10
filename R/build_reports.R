@@ -4,7 +4,7 @@ build_reports <- function(quarter_id, period_start, period_end,
   general_ledger, receipt_folder = "", mileage_log = "",
   included_projects = "All projects in GL", mileage_sheet_map = character(),
   mileage_rate = 0.765, fringe_rate = 0.18, indirect_rate = 0.10,
-  root = "reports", project_output_root = "", delivery = "financial_report") {
+  root = "reports", project_output_root = "", delivery = "financial_report", prepare_only = FALSE) {
   if (blank_value(quarter_id)) stop("Report Name is required.")
   start <- as.Date(period_start)
   end <- as.Date(period_end)
@@ -30,6 +30,11 @@ build_reports <- function(quarter_id, period_start, period_end,
     fringe_rate = fringe_rate, indirect_rate = indirect_rate,
     root = root, project_output_root = project_output_root
   )
+  if (isTRUE(prepare_only)) {
+    # Match source inputs for review without creating report deliverables.
+    run_reporting_engine(paths$settings)
+    return(list(paths = paths, project_deliverables = NULL))
+  }
   run_quarterly_pipeline(paths, delivery = delivery)
 }
 
@@ -47,6 +52,8 @@ stage_upload <- function(upload, destination) {
 stage_receipts <- function(upload, destination) {
   dir.create(destination, recursive = TRUE, showWarnings = FALSE)
   if (is.null(upload) || nrow(upload) == 0L) return(destination)
+  upload <- upload[tolower(tools::file_ext(upload$name)) %in%
+    c("pdf", "png", "jpg", "jpeg", "tif", "tiff", "heic"), , drop = FALSE]
   for (index in seq_len(nrow(upload))) {
     # Separate folders preserve duplicate basenames. These folders are not project hints.
     folder <- file.path(destination, sprintf("upload_%05d", index))
@@ -66,8 +73,7 @@ export_report_bundle <- function(result, file) {
       stop("Could not create the report bundle.")
     }
   }
-  copy_tree(result$paths$quarter, file.path(staging, "audit"))
   copy_tree(result$project_deliverables$root, file.path(staging, "project_reports"))
-  zip::zipr(file, files = c("audit", "project_reports"), root = staging)
+  zip::zipr(file, files = "project_reports", root = staging)
   invisible(file)
 }

@@ -20,9 +20,9 @@ source("dev/run_dev.R")
 
 Both the development launcher and standalone script activate the project environment. Restart your current R session once after this migration so it uses renv and clears functions from the earlier sourced app. Workspace restoration and saving are disabled for this project to prevent old global functions from masking package functions.
 
-Upload a GL and optional mileage workbook, choose projects, confirm mileage worksheet matches, set reporting dates and approved rates, upload receipt files, and build reports. The app provides a full ZIP bundle and a separate `SmartsheetInput.xlsx` download. Receipt filenames must retain their dollar amount; a date helps disambiguate matches. You can select multiple receipts, including files from different project subfolders. Folder-based project hints remain available in the script workflow.
+Upload a GL and optional mileage workbook, choose projects, confirm mileage worksheet matches, and set reporting dates and approved rates. Use **Choose folder** to select the folder containing your receipts, including subfolders. The browser uploads the folder's files; supported PDFs and images are used as receipts. Receipt filenames must retain their dollar amount; a date helps disambiguate matches. Receipts are optional. Leave **Check receipts before generating reports** selected to review matches first, or clear it and choose **Skip receipt review and generate reports**. Reports are generated after finishing or skipping review. The Download reports page then provides a project reports ZIP and a separate `Smartsheet_Input.xlsx` download.
 
-**Download the bundle before leaving the page.** Each session and run has separate temporary storage. Session files are removed on disconnect. The ZIP includes project deliverables plus an `audit` folder containing input snapshots, settings, internal QC outputs, delivery status, and the run log. Paths recorded inside the audit files describe the original run environment; use the copied files in the archive for review.
+**Download the reports before leaving the page.** Each session and run has separate temporary storage. Session files are removed on disconnect. The ZIP contains project workbooks and receipt packets.
 
 ## Manage dependencies
 
@@ -36,6 +36,16 @@ renv::status()
 ```
 
 Commit `renv.lock`, `.Rprofile`, `renv/activate.R`, and `renv/settings.json` with the code. Use `renv::restore()` to return to the recorded versions. The lockfile records the R version; install a compatible R version separately. [Posit Connect uses the lockfile to capture dependency versions](https://docs.posit.co/connect/how-to/use-renv-for-reproducible-r-deployments/).
+
+## Review expense lines and receipts
+
+Before generating reports, the **Review receipts** page shows a searchable expense table on the left and the selected receipt on the right. Select a line, filter by project or lines needing attention, and use Previous/Next to work through the expenses. PDFs use the browser's PDF viewer; PNG/JPEG receipts appear as images. Other supported image formats are converted for preview when possible. You can also open the full-size preview in a new tab or download the original receipt. Previews are served through session-specific URLs, not a shared public input directory.
+
+To correct a match, choose a receipt and click **Save match**. **Remove current match** leaves the line unmatched. Moving a receipt from a different line requires enabling **Move this receipt**; the old line becomes unmatched and needs review again. This workflow allows one receipt per expense line and one expense line per receipt. Use **Save note** to retain a note, **Mark line reviewed** after checking it, or **Reopen line** to revisit it. A reviewed line may still have an amount mismatch or missing receipt; review confirmation never overrides reconciliation QC.
+
+Edits remain drafts until you choose **Finish review and generate reports**. This generates QC, expense workbooks, receipt packets, and the Smartsheet summary using the reviewed matches, then opens the download page. Use **Skip remaining review and generate reports** to generate using the automatic matches, or **Discard draft edits and generate reports** if you have pending changes to discard. You can skip review entirely by clearing the review checkbox on the Financial reporting page. Generation failures retain your review draft so you can retry. After generation, returning to review and applying further edits creates an isolated report version.
+
+Detailed_Expenses.xlsx includes posted and document dates, amount, receipt filename, and a total row. Hourly_Time_Entries.xlsx shows payroll, fringe, and the combined total without a status column. Review versions use copied inputs; the original ledger and receipt files are not edited. The standalone script continues to generate reports without requiring interactive review.
 
 ## Run the standalone script
 
@@ -85,9 +95,9 @@ Review each run in this order:
 1. Confirm project scope in `Project_Scope.csv`.
 2. Check `Input_Readiness.csv` and `Reconciliation_Checks.csv`.
 3. Review `Payroll_GL_Summary.csv`, `Payroll_Detail.csv`, `Expense_Receipt_QC.csv`, and `Mileage_Summary.csv`.
-4. Review `Financial_Report_Category_Draft.csv` and `Project_Deliverables_Manifest.csv` before using the project reports or Smartsheet summary.
+4. Review `Financial_Report_Category_Draft.csv` before using the project reports or Smartsheet summary.
 
-Each project receives `Category_Spend_Summary.xlsx`, `Detailed_Expenses.xlsx`, and `Hourly_Time_Entries.xlsx`, plus `Receipt_Packet.pdf` when all matched receipts can be converted and combined. Missing or ambiguous receipt matches stay in QC files. Receipt packets follow receipt date, falling back to the GL document date.
+Each project receives dated `Category_Spend_Summary`, `Detailed_Expenses`, and `Hourly_Time_Entries` workbooks, plus a dated `Receipt_Packet` PDF when all matched receipts can be converted and combined. The Smartsheet workbook and ZIP filename also include the reporting date range. Missing or ambiguous receipt matches stay in QC files. Receipt packets follow receipt date, falling back to the GL document date.
 
 ## Project layout
 

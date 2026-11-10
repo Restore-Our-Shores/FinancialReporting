@@ -5,7 +5,7 @@
  receipt_folder = "", mileage_log = "", included_projects = "All projects in GL",
  mileage_sheet_map = character(), mileage_rate = 0.765, fringe_rate = 0.18,
  indirect_rate = 0.10, root = "reports", project_output_root = "",
- delivery = "financial_report")}
+ delivery = "financial_report", prepare_only = FALSE)}
 \arguments{
 \item{quarter_id}{A new report name.}
 \item{period_start, period_end}{Reporting dates in YYYY-MM-DD format.}
@@ -17,6 +17,7 @@
 \item{mileage_rate, fringe_rate, indirect_rate}{Approved numeric rates.}
 \item{root}{Persistent folder for report snapshots and internal outputs.}
 \item{project_output_root}{Optional folder receiving project deliverables.}
-\item{delivery}{financial_report, smartsheet_draft, or both.}}
+\item{delivery}{financial_report, smartsheet_draft, or both.}
+\item{prepare_only}{If TRUE, snapshot inputs and prepare receipt matches for review without generating report deliverables. Defaults to FALSE for standalone reporting.}}
 \description{Validates settings, snapshots inputs, and runs the same calculations and exports used by the Shiny application.}
-\value{A list containing paths, checks, delivery status, and project deliverables.}
+\value{A list containing paths, checks, delivery status, and project deliverables. With prepare_only = TRUE, returns paths and NULL project deliverables.}

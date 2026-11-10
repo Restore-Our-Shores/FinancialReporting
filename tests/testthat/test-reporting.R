@@ -1,12 +1,3 @@
-fixture <- function() {
-  root <- normalizePath(testthat::test_path("..", "..", "simulated_data"), mustWork = TRUE)
-  projects <- c("Meadow Restoration", "River Monitoring", "Woodland Outreach")
-  list(quarter_id = "test_report", period_start = "2026-07-01", period_end = "2026-09-30",
-    general_ledger = file.path(root, "Simulated_General_Ledger.xlsx"),
-    receipt_folder = file.path(root, "receipts"), mileage_log = file.path(root, "Simulated_Mileage_Log.xlsx"),
-    mileage_sheet_map = stats::setNames(projects, projects), root = tempfile("reports_"))
-}
-
 test_that("upload staging preserves metadata and duplicate basenames", {
   folder <- tempfile(); dir.create(folder)
   source <- tempfile(); writeLines("receipt", source)
@@ -15,6 +6,9 @@ test_that("upload staging preserves metadata and duplicate basenames", {
   files <- list.files(folder, recursive = TRUE, full.names = TRUE)
   expect_length(files, 2L)
   expect_identical(basename(files), upload$name)
+  ignored <- data.frame(name = "notes.txt", datapath = source)
+  stage_receipts(ignored, folder)
+  expect_length(list.files(folder, recursive = TRUE), 2L)
 })
 
 test_that("reports reconcile fictional controls and archive all deliverables", {
@@ -32,17 +26,34 @@ test_that("reports reconcile fictional controls and archive all deliverables", {
   expect_equal(sum(mileage$miles), 495)
   expect_equal(sum(mileage$mileage_cost), 378.675)
   summary <- readxl::read_xlsx(result$project_deliverables$smartsheet_summary)
-  expect_equal(nrow(summary), 9L)
-  expect_identical(names(summary), c("Project", "Payroll", "Expenses", "Mileage", "Spent Amount", "Total Budget", "Percent Spent"))
+  expect_equal(nrow(summary), 3L)
+  expect_identical(names(summary), c("Project", "Payroll", "Fringe", "Expenses", "Mileage", "Total Direct Costs", "Indirect", "Invoice Total"))
+  expect_equal(summary$`Total Direct Costs`, summary$Payroll + summary$Fringe + summary$Expenses + summary$Mileage)
+  expect_equal(summary$`Invoice Total`, summary$`Total Direct Costs` + summary$Indirect)
   expect_error(do.call(build_reports, config), "already exists")
   bundle <- tempfile(fileext = ".zip")
   export_report_bundle(result, bundle)
   entries <- utils::unzip(bundle, list = TRUE)$Name
-  expect_true("project_reports/SmartsheetInput.xlsx" %in% entries)
-  expect_true("audit/settings.csv" %in% entries)
-  expect_equal(sum(grepl("^project_reports/.*/Receipt_Packet.pdf$", entries)), 3L)
+  dated <- "2026-07-01_to_2026-09-30"
+  expect_true(paste0("project_reports/Smartsheet_Input_", dated, ".xlsx") %in% entries)
+  expect_false(any(grepl("(^|/)audit(/|$)", entries, ignore.case = TRUE)))
+  expect_false(any(grepl("Manifest", entries, ignore.case = TRUE)))
+  expect_equal(sum(grepl(paste0("^project_reports/.*/Receipt_Packet_", dated, "\\.pdf$"), entries)), 3L)
   extracted <- tempfile(); utils::unzip(bundle, exdir = extracted)
-  expect_equal(readxl::read_xlsx(file.path(extracted, "project_reports", "SmartsheetInput.xlsx")), summary)
+  expect_equal(readxl::read_xlsx(file.path(extracted, "project_reports", paste0("Smartsheet_Input_", dated, ".xlsx"))), summary)
+  project <- result$project_deliverables$manifest$Project[1]
+  folder <- file.path(result$project_deliverables$root, safe_output_name(project))
+  expenses <- readxl::read_xlsx(file.path(folder, paste0("Detailed_Expenses_", dated, ".xlsx")))
+  expect_identical(names(expenses), c("Posted Dt.", "Doc Dt.", "Amount", "File name"))
+  expect_identical(expenses[["Posted Dt."]][nrow(expenses)], "TOTAL")
+  expect_equal(expenses$Amount[nrow(expenses)], sum(expenses$Amount[-nrow(expenses)]))
+  hourly <- readxl::read_xlsx(file.path(folder, paste0("Hourly_Time_Entries_", dated, ".xlsx")))
+  expect_false("status" %in% names(hourly))
+  expect_identical(tail(hourly$payroll_date, 3), c("TOTAL", "Fringe (18%)", "TOTAL"))
+  expect_equal(tail(hourly$payroll_amount, 1), sum(tail(hourly$payroll_amount, 3)[1:2]))
+  category <- readxl::read_xlsx(file.path(folder, paste0("Category_Spend_Summary_", dated, ".xlsx")))
+  expect_true(any(grepl("18%", category$Category)))
+  expect_true(any(grepl("0.765/mile", category$Category)))
 })
 
 test_that("Shiny runs the shared workflow with real browser upload paths", {
@@ -52,19 +63,32 @@ test_that("Shiny runs the shared workflow with real browser upload paths", {
   holder <- new.env()
   shiny::testServer(app_server, {
     session$setInputs(quarter_gl = upload(config$general_ledger), quarter_mileage = upload(config$mileage_log))
+    expect_match(output$quarter_date_inputs$html, "2026-07-12")
+    expect_match(output$quarter_date_inputs$html, "2026-09-12")
     projects <- names(config$mileage_sheet_map)
     session$setInputs(quarter_id = "browser_report", quarter_projects = projects,
+      review_receipts = TRUE,
       quarter_start = "2026-07-01", quarter_end = "2026-09-30",
       quarter_mileage_rate = 0.765, quarter_fringe_rate = 0.18, quarter_indirect_rate = 0.10,
       quarter_receipts = upload(list.files(config$receipt_folder, full.names = TRUE)))
     session$setInputs(quarter_mileage_sheet_1 = projects[1], quarter_mileage_sheet_2 = projects[2], quarter_mileage_sheet_3 = projects[3])
     session$setInputs(run_quarterly = 1)
+    expect_null(quarter_result())
+    expect_null(quarter_prepared()$project_deliverables)
+    expect_length(list.files(quarter_prepared()$paths$quarterly), 0L)
+    expect_equal(nrow(read_receipt_review(quarter_prepared())$expenses), 9L)
+    session$setInputs(skip_review = 1)
     result <- quarter_result()
     expect_false(is.null(result))
     qc <- read.csv(file.path(result$paths$internal, "Expense_Receipt_QC.csv"))
     expect_true(all(qc$status == "Pass"))
     expect_equal(sum(qc$receipt_count), 9)
     expect_true(file.exists(result$project_deliverables$smartsheet_summary))
+    session$setInputs(review_receipts = FALSE, quarter_receipts = NULL, run_quarterly = 2)
+    expect_false(is.null(quarter_result()))
+    expect_true(file.exists(quarter_result()$project_deliverables$smartsheet_summary))
+    expect_equal(nrow(read_receipt_review(quarter_result())$receipts), 0L)
+    expect_match(output$quarter_downloads$html, "Download project reports")
     holder$root <- session_root
   })
   expect_false(dir.exists(holder$root))
