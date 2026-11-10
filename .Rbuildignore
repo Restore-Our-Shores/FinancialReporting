@@ -26,3 +26,5 @@
 ^[.]RData$
 ^[.]Rprofile$
 ^reports$
+^.*\.Rproj$
+^\.Rproj\.user$

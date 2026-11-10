@@ -1,3 +1,4 @@
+source("renv/activate.R")
 local({
   project <- Sys.getenv("RENV_PROJECT", unset = getwd())
   # Keep this project's library and support files together, including on Windows.

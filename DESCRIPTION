@@ -1,6 +1,6 @@
 Package: financialreports
 Title: Financial Reporting
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: person("Financial Reporting", "Team", email = "financialreports@example.org", role = c("aut", "cre"))
 Description: A Shiny golem application and shared batch workflow for preparing
     project financial reports, receipt reconciliation, and Smartsheet summaries.
@@ -8,6 +8,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
 Imports:
+    DT,
     dplyr,
     golem,
     lubridate,
