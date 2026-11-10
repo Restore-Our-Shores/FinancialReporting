@@ -2,9 +2,6 @@
 data/
 quarters/
 smartsheet_refreshes/
-simulated_data/output/*
-!simulated_data/output/.gitkeep
-tmp/simulated_data_build/
 
 # Local RStudio and R session files
 .Rproj.user/
@@ -15,3 +12,23 @@ tmp/simulated_data_build/
 # Operating-system files
 .DS_Store
 Thumbs.db
+
+# Local package dependencies and build/check outputs
+.Rlib/
+financialreports_*.tar.gz
+financialreports.Rcheck/
+config/report_config.R
+tmp/
+
+# Local credentials and publishing/session configuration
+.Renviron
+.env
+.env.*
+!.env.example
+.aws/
+.codex/
+.agents/
+rsconnect/
+
+# Financial report run snapshots
+reports/

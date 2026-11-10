@@ -1,21 +1,4 @@
-# Quarterly Financial Reporting Pipeline
-#
-# This is the internal calculation engine used by the local Shiny app.
-# The app supplies isolated quarter settings and writes review-ready files.
-# It never treats a missing input as zero.
-
-suppressPackageStartupMessages({
-  library(readxl)
-  library(dplyr)
-  library(stringr)
-  library(lubridate)
-})
-
-settings_path <- getOption("quarterly.settings_path", NA_character_)
-if (is.na(settings_path) || !file.exists(settings_path)) {
-  stop("RunQuarterlyReport.R is an internal engine. Start the workflow with shiny::runApp(\"shiny_app\", launch.browser = TRUE).")
-}
-
+run_reporting_engine <- function(settings_path) {
 settings <- utils::read.csv(settings_path, check.names = FALSE, stringsAsFactors = FALSE)
 setting_value <- function(name) {
   value <- settings$Value[settings$Setting == name]
@@ -69,7 +52,7 @@ project_scope <- if (is.na(project_scope_value) || !nzchar(trimws(project_scope_
   trimws(unlist(strsplit(project_scope_value, ";", fixed = TRUE)))
 }
 
-if (is.na(gl_path) || !file.exists(gl_path)) stop("General ledger file is missing. Supply it in the R Markdown parameter dialog.")
+if (is.na(gl_path) || !file.exists(gl_path)) stop("General ledger file is missing. Supply a general_ledger path to build_reports().")
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 # 1. Load and standardize the GL. The shared reader finds the transaction
@@ -122,6 +105,15 @@ standardized_gl <- gl_raw %>%
   ungroup() %>%
   arrange(transaction_date, project_standard, gl_account, source_row)
 
+all_gl_projects <- unique(standardized_gl$project_standard)
+full_source_difference <- if (length(source_total) > 0 && is.finite(source_total[1])) {
+  sum(standardized_gl$net_amount) - source_total[1]
+} else NA_real_
+in_period <- standardized_gl$transaction_date >= period_start & standardized_gl$transaction_date <= period_end
+out_of_period_gl <- standardized_gl[!in_period, , drop = FALSE]
+standardized_gl <- standardized_gl[in_period, , drop = FALSE]
+if (nrow(standardized_gl) == 0) stop("No GL transactions fall within the selected reporting dates.")
+
 if (length(project_scope) > 0) {
   standardized_gl <- standardized_gl %>%
     filter(project_original %in% project_scope | project_standard %in% project_scope)
@@ -129,16 +121,18 @@ if (length(project_scope) > 0) {
     stop("No GL transactions matched Included projects. Use project names from the Grant and Program name column and separate multiple names with semicolons.")
   }
 }
-scoped_source_total <- if (length(project_scope) == 0 && length(source_total) > 0 && !is.na(source_total[1])) {
-  source_total[1]
-} else {
-  sum(standardized_gl$source_amount, na.rm = TRUE)
+if (any(!is.finite(standardized_gl$source_amount) | !is.finite(standardized_gl$net_amount))) {
+  stop("Selected GL transactions contain missing or invalid amounts. Correct the GL before running reports.")
 }
+scoped_source_total <- sum(standardized_gl$source_amount)
 project_scope_summary <- tibble(
   scope_setting = if (length(project_scope) == 0) "All projects in GL" else paste(project_scope, collapse = "; "),
   projects_included = length(unique(standardized_gl$project_standard)),
   transactions_included = nrow(standardized_gl),
-  source_amount_in_scope = scoped_source_total
+  source_amount_in_scope = scoped_source_total,
+  reporting_period_start = as.character(period_start),
+  reporting_period_end = as.character(period_end),
+  transactions_outside_period = nrow(out_of_period_gl)
 )
 
 gl_actuals <- standardized_gl %>%
@@ -160,7 +154,7 @@ receipt_amount <- function(file_name) {
 receipt_date_from_filename <- function(file_name) {
   name <- basename(file_name)
   compact <- str_match(name, "(20[0-9]{2})([0-1][0-9])([0-3][0-9])")
-  if (!is.na(compact[1, 1])) return(as.Date(paste(compact[1, 2], compact[1, 3], compact[1, 4], sep = "-")))
+  if (!is.na(compact[1, 1])) return(as.Date(paste(compact[1, 2], compact[1, 3], compact[1, 4], sep = "-"), format = "%Y-%m-%d"))
   separated <- str_match(name, "(20[0-9]{2})[-_. ]([0-1][0-9])[-_. ]([0-3][0-9])")
   if (!is.na(separated[1, 1])) return(as.Date(paste(separated[1, 2], separated[1, 3], separated[1, 4], sep = "-")))
   as.Date(NA)
@@ -198,12 +192,12 @@ for (receipt_index in seq_len(nrow(receipt_inventory))) {
     next
   }
   candidates <- which(abs(expense_lines$net_amount - receipt$receipt_amount) <= expense_tolerance)
-  if (!is.na(receipt$project_hint) && nzchar(receipt$project_hint)) {
+  if (!is.na(receipt$project_hint) && receipt$project_hint %in% all_gl_projects) {
     candidates <- candidates[expense_lines$project_standard[candidates] == receipt$project_hint]
   }
   if (!is.na(receipt$receipt_date)) {
     dated <- candidates[as.character(expense_lines$match_date[candidates]) == as.character(receipt$receipt_date)]
-    if (length(dated) > 0) candidates <- dated
+    candidates <- dated
   }
   if (nzchar(receipt$receipt_vendor) && nchar(receipt$receipt_vendor) >= 3) {
     vendor_text <- str_to_lower(paste(expense_lines$vendor[candidates], expense_lines$description[candidates]))
@@ -281,10 +275,41 @@ if (inherits(mileage_raw, "error") || is.null(mileage_raw)) {
   if (is.na(project_column) || is.na(miles_column)) {
     mileage_summary <- tibble(project_standard = sort(unique(standardized_gl$project_standard)), miles = NA_real_, mileage_cost = NA_real_, status = "Mileage log needs Project and Miles columns")
   } else {
-    mileage_summary <- mileage_raw %>%
-      transmute(project_standard = map_project(.data[[names(mileage_raw)[project_column]]]), miles = parse_number_safe(.data[[names(mileage_raw)[miles_column]]])) %>%
-      group_by(project_standard) %>% summarise(miles = sum(miles, na.rm = TRUE), .groups = "drop") %>%
-      mutate(mileage_rate = as.numeric(setting_value("Mileage reimbursement rate")), mileage_cost = miles * mileage_rate, status = if_else(is.na(mileage_rate), "Mileage rate missing", "Pass"))
+    mileage_rows <- data.frame(
+      project_standard = map_project(mileage_raw[[names(mileage_raw)[project_column]]]),
+      miles = parse_number_safe(mileage_raw[[names(mileage_raw)[miles_column]]]),
+      stringsAsFactors = FALSE
+    )
+    date_column <- find_column(mileage_raw, "^date$|^posted_dt$|^trip_date$|^travel_date$|^service_date$")
+    mileage_rows$date_invalid <- FALSE
+    if (!is.na(date_column)) {
+      mileage_dates <- parse_gl_date(mileage_raw[[names(mileage_raw)[date_column]]])
+      # Completely blank worksheet rows are not trips. A dated row with missing
+      # miles, or a populated trip with no valid date, remains pending review.
+      raw_miles <- trimws(as.character(mileage_raw[[names(mileage_raw)[miles_column]]]))
+      active <- !is.na(mileage_dates) | (!is.na(raw_miles) & nzchar(raw_miles))
+      mileage_rows$date_invalid <- is.na(mileage_dates)
+      keep <- active & (is.na(mileage_dates) | (mileage_dates >= period_start & mileage_dates <= period_end))
+      mileage_rows <- mileage_rows[keep, , drop = FALSE]
+    }
+    mileage_summary <- mileage_rows %>%
+      group_by(project_standard) %>%
+      summarise(
+        invalid_miles = any(!is.finite(miles) | miles < 0),
+        date_invalid = any(.data$date_invalid),
+        miles = if (any(!is.finite(miles) | miles < 0) || any(.data$date_invalid)) NA_real_ else sum(miles),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        mileage_rate = as.numeric(setting_value("Mileage reimbursement rate")),
+        mileage_cost = miles * mileage_rate,
+        status = case_when(
+          .data$date_invalid ~ "Review: missing or invalid trip date",
+          .data$invalid_miles ~ "Review: missing, invalid, or negative miles",
+          is.na(mileage_rate) ~ "Mileage rate missing",
+          TRUE ~ "Pass"
+        )
+      ) %>% select(-all_of(c("invalid_miles", "date_invalid")))
   }
 }
 
@@ -300,7 +325,7 @@ report_categories <- expand.grid(project_standard = projects, category = categor
   left_join(expense_receipt_qc %>% select(project_standard, receipt_packet_total, expense_status = status), by = "project_standard") %>%
   left_join(mileage_summary %>% select(project_standard, miles, mileage_cost, mileage_status = status), by = "project_standard") %>%
   mutate(
-    current_quarter_spend = case_when(
+    current_period_spend = case_when(
       category == "Payroll" ~ payroll_from_gl,
       category == "Expenses" & expense_status == "Pass" ~ gl_actual,
       category == "Mileage" & mileage_status == "Pass" ~ mileage_cost,
@@ -315,14 +340,14 @@ report_categories <- expand.grid(project_standard = projects, category = categor
   ) %>% arrange(project_standard, factor(category, levels = categories))
 
 smartsheet_draft <- report_categories %>%
-  select(project_standard, category, current_quarter_spend, contracted_amount) %>%
-  tidyr::pivot_wider(names_from = category, values_from = c(current_quarter_spend, contracted_amount)) %>%
+  select(project_standard, category, current_period_spend, contracted_amount) %>%
+  tidyr::pivot_wider(names_from = category, values_from = c(current_period_spend, contracted_amount)) %>%
   transmute(
     Project = project_standard,
     `Reporting Period` = period_label,
-    Payroll = current_quarter_spend_Payroll,
-    Expenses = current_quarter_spend_Expenses,
-    Mileage = current_quarter_spend_Mileage,
+    Payroll = current_period_spend_Payroll,
+    Expenses = current_period_spend_Expenses,
+    Mileage = current_period_spend_Mileage,
     `Spent Amount` = if_else(!is.na(Payroll) & !is.na(Expenses) & !is.na(Mileage), Payroll + Expenses + Mileage, NA_real_),
     `Total Budget` = if_else(!is.na(contracted_amount_Payroll) & !is.na(contracted_amount_Expenses) & !is.na(contracted_amount_Mileage), contracted_amount_Payroll + contracted_amount_Expenses + contracted_amount_Mileage, NA_real_),
     `Percent Spent` = if_else(!is.na(`Spent Amount`) & !is.na(`Total Budget`) & `Total Budget` != 0, `Spent Amount` / `Total Budget`, NA_real_),
@@ -346,6 +371,12 @@ reconciliation_checks <- tibble(
   status = c(if_else(abs(sum(standardized_gl$net_amount) - scoped_source_total) < 0.005, "Pass", "Review"), if_else(any(standardized_gl$project_standard == ""), "Review", "Pass"), "Review", if_else(any(standardized_gl$possible_duplicate), "Review", "Pass"), "Review")
 )
 
+reconciliation_checks <- bind_rows(reconciliation_checks, tibble(
+  check = "Full GL source total less standardized net before date/project filters",
+  value = if (is.finite(full_source_difference)) as.character(full_source_difference) else "Source total not supplied",
+  status = if (!is.finite(full_source_difference)) "Review" else if (abs(full_source_difference) < 0.005) "Pass" else "Review"
+))
+write_csv(out_of_period_gl, "GL_Transactions_Outside_Period.csv", output_dir)
 write_csv(project_scope_summary, "Project_Scope.csv", output_dir)
 write_csv(standardized_gl, "Standardized_GL_Transactions.csv", output_dir)
 write_csv(input_readiness, "Input_Readiness.csv", output_dir)
@@ -355,12 +386,12 @@ write_csv(payroll_summary, "Payroll_GL_Summary.csv", output_dir)
 write_csv(payroll_detail, "Payroll_Detail.csv", output_dir)
 write_csv(expense_receipt_qc, "Expense_Receipt_QC.csv", output_dir)
 write_csv(mileage_summary, "Mileage_Summary.csv", output_dir)
-write_csv(report_categories, "Quarterly_Report_Category_Draft.csv", output_dir)
+write_csv(report_categories, "Financial_Report_Category_Draft.csv", output_dir)
 write_csv(smartsheet_draft, "Smartsheet_Draft.csv", output_dir)
 write_csv(reconciliation_checks, "Reconciliation_Checks.csv", output_dir)
 
 writeLines(c(
-  "Quarterly Financial Reporting Pipeline - Run Notes",
+  "Financial Reporting Pipeline - Run Notes",
   paste("Reporting dates:", period_label),
   "",
   "Use the files in this output folder in this order:",
@@ -369,9 +400,11 @@ writeLines(c(
   "3. Payroll_GL_Summary.csv and Payroll_Detail.csv - review payroll amounts drawn from the GL.",
   "4. Expense_Receipt_QC.csv and Receipt_Inventory.csv - resolve packet variances and filenames with no dollar amount.",
   "5. Mileage_Summary.csv - confirm Maggie's miles and applicable project rate.",
-  "6. Quarterly_Report_Category_Draft.csv - review funding amounts and current-period spend.",
+  "6. Financial_Report_Category_Draft.csv - review funding amounts and current-period spend.",
   "7. Smartsheet_Draft.csv - import only rows marked Ready for review."
 ), file.path(output_dir, "RUN_NOTES.txt"))
 
-cat("Quarterly reporting pipeline complete. Review:", normalizePath(output_dir), "\n")
-cat("Do not distribute quarterly reports or update Smartsheet until all relevant QC statuses are Pass.\n")
+cat("Financial reporting pipeline complete. Review:", normalizePath(output_dir), "\n")
+cat("Do not distribute financial reports or update Smartsheet until all relevant QC statuses are Pass.\n")
+
+}
