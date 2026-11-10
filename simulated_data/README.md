@@ -10,10 +10,10 @@ The files cover July 1 through September 30, 2026 (calendar Q3).
 3. Upload `Simulated_General_Ledger.xlsx` as the General Ledger.
 4. Upload `Simulated_Mileage_Log.xlsx` as the mileage workbook.
 5. Include all three projects and match each to the worksheet with the same name.
-6. Select this folder's `receipts` directory. It contains nine individual PDFs.
-7. Select this folder's `output` directory, or another empty folder, for reports.
+6. Upload all nine PDFs from this folder's `receipts` directory.
+7. After building reports, download the report bundle to retain the outputs.
 8. Use mileage rate **0.765**, fringe rate **0.18**, and indirect rate **0.10**.
-9. Build project reports and compare the results with the controls below. Every run also creates `SmartsheetInput.xlsx` in the selected output folder: a single worksheet with nine rows (Expenses, Payroll, and Mileage for each of the three projects) for manual entry into Smartsheet.
+9. Build project reports and compare the results with the controls below. Every run also creates `SmartsheetInput.xlsx` in the downloadable project reports: a single worksheet with nine rows (Expenses, Payroll, and Mileage for each of the three projects) for manual entry into Smartsheet.
 
 ## Contents and relationships
 
@@ -39,4 +39,4 @@ The files cover July 1 through September 30, 2026 (calendar Q3).
 Mileage costs retain three decimal places here to reflect the exact rate product.
 Each project's expense receipt check should report **Pass**, with three matched receipts and zero difference. All nine receipts should have status **Matched**. Payroll plus GL expenses totals **9,407.25**; mileage is calculated separately from the mileage log to avoid double counting.
 
-The output directory starts empty. Generated reports are excluded from Git; simulated inputs are safe to keep with the code.
+Generated reports are excluded from Git; simulated inputs are safe to keep with the code. Use the app download bundle or configure a separate output directory for script runs.
