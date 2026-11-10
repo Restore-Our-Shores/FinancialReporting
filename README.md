@@ -58,8 +58,13 @@ The root `app.R` loads the source package and runs the golem app, following the 
 
 ```r
 source("dev/deploy.R")
+deploy_financialreports(dry_run = TRUE) # Check the root directory and included lockfile
 deploy_financialreports(account = "YOUR_ACCOUNT", server = "connect.example.org")
 ```
+
+The helper resolves the repository root when sourced, so changing the working directory afterward does not change the deployment location. It checks that `renv.lock` exists and is included before uploading. To specify another checkout explicitly, supply `appDir = "/path/to/FinancialReporting"`.
+
+When publishing through the RStudio button, open the root `app.R` and publish its entire directory; ensure `renv.lock`, `DESCRIPTION`, `NAMESPACE`, `LICENSE`, `R/`, and `inst/` are selected. When deploying from GitHub through Connect, select the repository root as the application directory, with `app.R` as the entry point. A directory such as `R/`, `dev/`, or `inst/` does not contain the lockfile.
 
 This helper uses an explicit file allowlist: `app.R`, package metadata, `renv.lock`, `R/`, and `inst/`. Connect uses the lockfile when preparing the deployment dependencies; the local renv library and activation files are excluded from the deployment bundle. Financial data, report outputs, examples, configuration files, credentials, and local libraries are excluded. The `.rscignore` file also protects common local folders when publishing from the IDE. Review the deployment file list if publishing through the IDE instead of the helper.
 
